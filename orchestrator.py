@@ -83,10 +83,10 @@ Waiting for input...
 async def run_chat_loop():
     print("DEBUG: Starting chat loop...", flush=True)
 
-    # Check for API Key
-    if not os.getenv("GEMINI_API_KEY"):
-        print("Error: GEMINI_API_KEY not found in .env")
-        sys.exit(1)
+    # API Key check removed for Local LLM
+    # if not os.getenv("GEMINI_API_KEY"):
+    #     print("Error: GEMINI_API_KEY not found in .env")
+    #     sys.exit(1)
     
     # Initialize Memory Systems
     episodic_memory = EpisodicMemory(host=CHROMA_HOST, port=CHROMA_PORT)
@@ -219,27 +219,20 @@ async def run_chat_loop():
                             for tool in mcp_tools_list.tools
                         ])
 
-                    # Call Gemini
-                    retry_delay = 10
+                    # Call Local LLM
                     response_message = None
-                    
-                    for attempt in range(3):
-                        try:
-                            response = completion(
-                                model="gemini/gemini-2.0-flash-exp",
-                                messages=payload_messages,
-                                tools=current_tool_definitions,
-                                api_key=os.getenv("GEMINI_API_KEY")
-                            )
-                            response_message = response.choices[0].message
-                            break
-                        except Exception as e:
-                            if "429" in str(e) and attempt < 2:
-                                print(f"Rate limited. Retrying...", flush=True)
-                                time.sleep(retry_delay)
-                                retry_delay *= 2
-                            else:
-                                raise e
+                    try:
+                        response = completion(
+                            model="openai/local-model",
+                            api_base="http://127.0.0.1:1234/v1",
+                            api_key="lm-studio",
+                            messages=payload_messages,
+                            tools=current_tool_definitions,
+                        )
+                        response_message = response.choices[0].message
+                    except Exception as e:
+                        print(f"LLM Call Failed: {e}")
+                        continue
                     
                     # Process Response
                     if response_message:
@@ -282,10 +275,10 @@ async def run_chat_loop():
                             payload_messages = [{"role": "system", "content": prompt_manager.get_system_prompt()}] + [m for m in messages if m["role"] != "system"] # Use fresh history
 
                             second_response = completion(
-                                model="gemini/gemini-2.0-flash-exp",
+                                model="openai/local-model",
+                                api_base="http://127.0.0.1:1234/v1",
+                                api_key="lm-studio",
                                 messages=payload_messages,
-                                tools=current_tool_definitions, 
-                                api_key=os.getenv("GEMINI_API_KEY")
                             )
                             final_message = second_response.choices[0].message
                             messages.append(final_message)
