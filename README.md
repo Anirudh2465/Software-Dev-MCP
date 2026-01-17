@@ -1,69 +1,55 @@
 # Jarvis: The Digital Synapse
 
-Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution and a "Librarian" system for context-aware tool retrieval.
+Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution, a "Librarian" system for context-aware tool retrieval, and an advanced **Agentic Memory** system.
 
 ## 🧠 Core Architecture
 
-1.  **Orchestrator (`orchestrator.py`)**: The central brain. It maintains the chat loop, manages conversation history, and connects the LLM (Gemini) to local tools.
-2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations (`read`, `write`, `list`) to the Orchestrator.
-3.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve only the most relevant tools for a user's query, preventing context window overload.
-4.  **Memory Vault**: Uses **MongoDB** (upcoming) and **ChromaDB** for persistent data storage.
+1.  **Orchestrator (`orchestrator.py`)**: The central brain. It maintains the chat loop, manages conversation history (Episodic Memory), and connects the LLM (Gemini) to local tools.
+2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations.
+3.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve relevant tools.
+4.  **Memory Vault**: 
+    - **MongoDB (Semantic Memory)**: Stores permanent user facts (e.g., "User prefers dark mode").
+    - **ChromaDB (Episodic Memory)**: Stores conversation history for context retrieval.
 
 ## 🛠️ Prerequisites
 
--   **Docker Desktop**: For running MongoDB and ChromaDB services.
+-   **Docker Desktop**: Required for running MongoDB and ChromaDB.
 -   **Python 3.12+**
--   **uv**: An extremely fast Python package and project manager.
+-   **uv** (Recommended) or **pip**: For dependency management.
 
 ## 🚀 Installation & Setup
 
-### 1. Install `uv`
-If you haven't installed `uv` yet, use one of the following commands:
-
-**Windows (PowerShell):**
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Linux / macOS:**
+### 1. Clone the Repository
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 2. Project Setup
-Navigate to the project directory:
-```bash
+git clone <your-repo-url>
 cd jarvis
 ```
 
-### 3. Environment Setup
-We use `uv` to manage the virtual environment and dependencies. This ensures a reproducible environment across all platforms.
+### 2. Environment Setup
 
-**Initialize and Sync (Windows & Linux):**
-This command creates the virtual environment (`.venv`) and installs all dependencies lock-file.
+**Option A: Using `uv` (Recommended)**
 ```bash
+# Initialize and sync dependencies
 uv sync
 ```
 
-**Activating the Virtual Environment (Optional):**
-While `uv run <script>` automatically uses the environment, you can activate it manually if you prefer.
+**Option B: Using `pip`**
+```bash
+python -m venv .venv
+# Activate venv:
+# Windows: .venv\Scripts\activate
+# Linux/Mac: source .venv/bin/activate
 
-*   **Windows:**
-    ```powershell
-    .venv\Scripts\activate
-    ```
-*   **Linux / macOS:**
-    ```bash
-    source .venv/bin/activate
-    ```
+pip install -r requirements.txt
+```
 
-### 4. Configure Secrets
+### 3. Configure Secrets
 Create a `.env` file in the root directory and add your Google Gemini API key:
 ```ini
 GEMINI_API_KEY=your_api_key_here
 ```
 
-### 5. Start Infrastructure
+### 4. Start Infrastructure
 Launch the database services (MongoDB & ChromaDB) using Docker:
 ```bash
 docker compose up -d
@@ -71,36 +57,60 @@ docker compose up -d
 *   **MongoDB**: `localhost:27017`
 *   **ChromaDB**: `localhost:8000`
 
-## 📂 Code Files & Usage Guide
+## ✅ Verification & Initialization
 
-Here is a breakdown of the core files and how to run them.
+Before running the agent, verify your setup:
 
-| File | Description | Command to Run |
-| :--- | :--- | :--- |
-| **`verification_script.py`** | Verifies connectivity to MongoDB and ChromaDB. Run this first to ensure your infrastructure is ready. | `uv run verification_script.py` |
-| **`tool_indexer.py`** | **(Phase 2)** Reads `dummy_tools.json` and indexes them into ChromaDB. Run this **once** to populate the "Librarian". | `uv run tool_indexer.py` |
-| **`dummy_tools.json`** | A simulated dataset of 100+ tools (Calendar, Spotify, etc.) used for testing dynamic retrieval. | *Data file, not executable* |
-| **`filesystem_server.py`** | The MCP server exposing `list_directory`, `read_file`, and `write_file`. | *Started automatically by Orchestrator* |
-| **`orchestrator.py`** | **The Main App**. Connects to Gemini, queries The Librarian (ChromaDB), and executes tools via MCP. | `uv run orchestrator.py` |
+1.  **Verify Connections**:
+    ```bash
+    uv run verification_script.py
+    # OR
+    python verification_script.py
+    ```
+
+2.  **Populate Tool Index (The Librarian)**:
+    Run this **once** to index the dummy tools.
+    ```bash
+    uv run tool_indexer.py
+    # OR
+    python tool_indexer.py
+    ```
+
+3.  **Verify Memory System (Optional)**:
+    ```bash
+    uv run test_phase4.py
+    ```
 
 ## 🎮 How to Run "Jarvis"
 
-1.  **Start Databases**:
-    ```bash
-    docker compose up -d
-    ```
+Start the agent:
+```bash
+uv run orchestrator.py
+# OR
+python orchestrator.py
+```
 
-2.  **Populate Knowledge Base (The Librarian)**:
-    ```bash
-    uv run tool_indexer.py
-    ```
-    *You should see "Successfully indexed..." output.*
+### Feature Usage Guide
 
-3.  **Run the Agent**:
-    ```bash
-    uv run orchestrator.py
-    ```
+#### 1. Agentic Memory ("Who am I?")
+Jarvis remembers facts about you across sessions.
+-   **Tell Jarvis a fact**: "I am a Python developer living in Seattle."
+-   **Ask about it later**: "Where do I live?" (Even after restarting the agent).
 
-4.  **Interact**:
-    *   **Test local tools**: *"What's in my 'Notes' folder?"*
-    *   **Test RAG Retrieval**: *"Add a meeting with John tomorrow."* (Use this to verify it finds calendar tools and ignores music tools).
+#### 2. Mode Switching
+Control Jarvis's personality and context using modes.
+-   **Work Mode** (Default): Focuses on productivity and work-related facts.
+-   **Personal Mode**: Focuses on personal interests and casual conversation.
+-   **Switching**: 
+    -   *User*: "Switch to Personal mod."
+    -   *Jarvis*: "Mode switched to: Personal"
+
+#### 3. Standard Tools
+-   **Filesystem**: "List files in the current directory."
+-   **RAG Retrieval**: "Add a meeting to my calendar." (retrieves relevant calendar tools).
+
+## 📂 Troubleshooting
+
+-   **Database Connection Errors**: Ensure Docker Desktop is running and containers are up (`docker ps`).
+-   **Import Errors**: Ensure you have installed dependencies (`uv sync` or `pip install -r requirements.txt`).
+-   **API Key Error**: Double-check your `.env` file.
