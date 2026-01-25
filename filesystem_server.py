@@ -36,5 +36,37 @@ def write_file(path: str, content: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
+# --- Dynamic Tool Loading ---
+import importlib.util
+import sys
+
+TOOLS_DIR = "tools"
+
+def load_dynamic_tools():
+    if not os.path.exists(TOOLS_DIR):
+        return
+
+    for filename in os.listdir(TOOLS_DIR):
+        if filename.endswith(".py") and not filename.startswith("temp_"):
+            tool_name = filename[:-3]
+            file_path = os.path.join(TOOLS_DIR, filename)
+            
+            try:
+                spec = importlib.util.spec_from_file_location(tool_name, file_path)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    # Look for the function matching the tool name
+                    if hasattr(module, tool_name):
+                        func = getattr(module, tool_name)
+                        # Register with FastMCP
+                        mcp.tool()(func)
+                        print(f"Loaded dynamic tool: {tool_name}")
+            except Exception as e:
+                print(f"Failed to load tool {tool_name}: {e}")
+
+load_dynamic_tools()
+
 if __name__ == "__main__":
     mcp.run()

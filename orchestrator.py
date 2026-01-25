@@ -88,11 +88,14 @@ async def run_chat_loop():
     #     print("Error: GEMINI_API_KEY not found in .env")
     #     sys.exit(1)
     
+    from tool_creator import ToolCreator
+    
     # Initialize Memory Systems
     episodic_memory = EpisodicMemory(host=CHROMA_HOST, port=CHROMA_PORT)
     semantic_memory = SemanticMemory()
     prompt_manager = PromptManager(semantic_memory)
-    
+    tool_creator = ToolCreator()
+
     # Connect to ChromaDB for Tools (The Librarian)
     try:
         chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
@@ -121,13 +124,13 @@ async def run_chat_loop():
             mcp_tools_list = await session.list_tools()
             real_tool_names = {t.name for t in mcp_tools_list.tools}
             print(f"Connected to MCP Server. Real tools: {list(real_tool_names)}")
-            
+
             # Internal Tools Definitions
             save_fact_tool = {
                 "type": "function",
                 "function": {
                     "name": "save_fact",
-                    "description": "Save a permanent fact about the user. Categorize it as 'work', 'personal', or 'general'.",
+                    "description": "Save a permanent fact about the user.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -143,13 +146,29 @@ async def run_chat_loop():
                 "type": "function",
                 "function": {
                     "name": "set_mode",
-                    "description": "Switch the agent's mode between 'Work' and 'Personal'.",
+                    "description": "Switch the agent's mode.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "mode": {"type": "string", "enum": ["Work", "Personal"]}
                         },
                         "required": ["mode"]
+                    }
+                }
+            }
+
+            create_tool_tool = {
+                "type": "function",
+                "function": {
+                    "name": "create_tool",
+                    "description": "Create a new Python tool for a missing capability. Generates code, validates in Docker, and registers it.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                           "tool_name": {"type": "string", "description": "Snake_case name of the tool"},
+                           "description": {"type": "string", "description": "Detailed description of what the tool should do."}
+                        },
+                        "required": ["tool_name", "description"]
                     }
                 }
             }
@@ -165,12 +184,12 @@ async def run_chat_loop():
                     # Update System Prompt Dynamically
                     system_prompt = prompt_manager.get_system_prompt()
                     
-                    # Reset messages to keep system prompt fresh at the top, or update the first message?
-                    # For simple chat history, we normally keep appending. But system prompt needs to be "active".
-                    # Best practice: Insert system prompt as the very first message.
-                    # If we restart the messages list each turn we lose history.
-                    # We should keep history but "System" message usually stays at index 0.
-                    # Let's rebuild the messages list with the NEW system prompt + existing conversation history.
+                    # Add Tool Creation Instruction
+                    system_prompt += """
+[TOOL_CREATION]
+If you lack a specific tool to fulfill a request (e.g., specific file conversion, calculation), use 'create_tool' to build it.
+After creating a tool, you may need to ask the user to 'reload' or just wait for the next turn for it to be available (in this prototype).
+"""
                     
                     current_history = [m for m in messages if m["role"] != "system"]
                     
@@ -189,6 +208,7 @@ async def run_chat_loop():
                     current_tool_definitions = []
                     current_tool_definitions.append(save_fact_tool)
                     current_tool_definitions.append(set_mode_tool)
+                    current_tool_definitions.append(create_tool_tool)
 
                     if tool_collection is not None:
                         # print("DEBUG: Querying ChromaDB...", flush=True) 
@@ -256,6 +276,19 @@ async def run_chat_loop():
                                 elif function_name == "set_mode":
                                     print(f"Executing INTERNAL tool: {function_name}")
                                     result_content = prompt_manager.set_mode(function_args["mode"])
+                                elif function_name == "create_tool":
+                                    print(f"Executing CREATION tool: {function_name}")
+                                    result_content = tool_creator.create_tool(function_args["tool_name"], function_args["description"])
+                                    # Trigger re-indexing (Optional, but good for immediate availability if we used the indexer live)
+                                    # Since we use MCP tools list, we might need to tell the server to reload or just rely on 'restart server'.
+                                    # But for this prototype, if we want it immediately available, we need to refresh the MCP tools list.
+                                    # However, MCP server logic is in a separate process. It won't pick up new files until IT refreshes.
+                                    # Our filesystem_server.py loads tools on startup.
+                                    # We need to restart the MCP server or implement a 'reload' tool on it.
+                                    # Easier workaround: The User sees "Tool Created", and then we might need to restart this script or the server script.
+                                    # For now, let's just output the success message.
+                                    result_content += "\n(Note: You may need to restart the server or session to use this tool if it's not hot-loaded.)"
+                                    
                                 elif function_name in real_tool_names:
                                     print(f"Executing REAL tool: {function_name}")
                                     result = await session.call_tool(function_name, function_args)

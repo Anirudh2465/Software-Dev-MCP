@@ -1,0 +1,16 @@
+[
+    {
+        "name": "test_reverse",
+        "description": "Reverses a string",
+        "filename": "test_reverse.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    }
+]

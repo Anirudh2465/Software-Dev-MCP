@@ -1,19 +1,20 @@
 # Jarvis: The Digital Synapse
 
-Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution, a "Librarian" system for context-aware tool retrieval, and an advanced **Agentic Memory** system.
+Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution, a "Librarian" system for context-aware tool retrieval, an advanced **Agentic Memory** system, and a **Self-Evolution** engine for creating new tools.
 
 ## 🧠 Core Architecture
 
 1.  **Orchestrator (`orchestrator.py`)**: The central brain. It maintains the chat loop, manages conversation history (Episodic Memory), and connects the LLM (Gemini) to local tools.
-2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations.
-3.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve relevant tools.
-4.  **Memory Vault**: 
+2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations and **dynamically loads new tools**.
+3.  **Tool Creator (`tool_creator.py`)**: The evolution engine. It detects missing capabilities, generates Python code, **validates it in a Docker sandbox**, and registers it for immediate use.
+4.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve relevant tools.
+5.  **Memory Vault**: 
     - **MongoDB (Semantic Memory)**: Stores permanent user facts (e.g., "User prefers dark mode").
     - **ChromaDB (Episodic Memory)**: Stores conversation history for context retrieval.
 
 ## 🛠️ Prerequisites
 
--   **Docker Desktop**: Required for running MongoDB and ChromaDB.
+-   **Docker Desktop**: **REQUIRED** for running MongoDB, ChromaDB, and **validating new tools**.
 -   **Python 3.12+**
 -   **uv** (Recommended) or **pip**: For dependency management.
 
@@ -76,11 +77,6 @@ Before running the agent, verify your setup:
     python tool_indexer.py
     ```
 
-3.  **Verify Memory System (Optional)**:
-    ```bash
-    uv run test_phase4.py
-    ```
-
 ## 🎮 How to Run "Jarvis"
 
 Start the agent:
@@ -109,8 +105,17 @@ Control Jarvis's personality and context using modes.
 -   **Filesystem**: "List files in the current directory."
 -   **RAG Retrieval**: "Add a meeting to my calendar." (retrieves relevant calendar tools).
 
+#### 4. Tool Creation (Self-Evolution)
+Jarvis can create new tools if it lacks a specific capability.
+-   **Trigger**: Ask for something it cannot do yet.
+    -   *User*: "Calculate the Fibonacci sequence for the first 10 numbers."
+    -   *Jarvis*: "I don't have a tool for that. Creating `fibonacci` tool..."
+-   **Validation**: Jarvis writes the code and runs it in a Docker container to ensure safety and correctness.
+-   **Availability**: Once created, the tool is saved to `tools/` and can be used (note: may require a restart in the current prototype).
+
 ## 📂 Troubleshooting
 
 -   **Database Connection Errors**: Ensure Docker Desktop is running and containers are up (`docker ps`).
+-   **Tool Validation Failed**: Ensure `docker` is available in your PATH. The Tool Creator uses the `python:3.9-slim` image to validate code.
 -   **Import Errors**: Ensure you have installed dependencies (`uv sync` or `pip install -r requirements.txt`).
 -   **API Key Error**: Double-check your `.env` file.

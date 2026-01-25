@@ -25,8 +25,20 @@ def index_tools():
     print(f"Created collection '{COLLECTION_NAME}'")
 
     # Load dummy tools
-    with open("dummy_tools.json", "r") as f:
-        tools = json.load(f)
+    tools = []
+    if os.path.exists("dummy_tools.json"):
+        with open("dummy_tools.json", "r") as f:
+            tools.extend(json.load(f))
+
+    # Load Dynamic Tools
+    if os.path.exists("tool_definitions.json"):
+        with open("tool_definitions.json", "r") as f:
+            try:
+                dynamic_tools = json.load(f)
+                tools.extend(dynamic_tools)
+                print(f"Loaded {len(dynamic_tools)} dynamic tools.")
+            except json.JSONDecodeError:
+                print("Warning: tool_definitions.json is empty or invalid.")
 
     ids = []
     documents = [] # We'll embed the description + name
