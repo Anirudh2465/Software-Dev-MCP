@@ -13,9 +13,6 @@ from .tool_creator import ToolCreator
 
 load_dotenv()
 
-# Path to the server script
-# This file: jarvis/backend/app/services/orchestrator.py
-# Server script: jarvis/backend/scripts/filesystem_server.py
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 SERVER_SCRIPT = BASE_DIR / "backend" / "scripts" / "filesystem_server.py"
 
@@ -28,10 +25,10 @@ class PromptManager:
         self.semantic_memory = semantic_memory
     
     def set_mode(self, mode):
-        if mode in ["Work", "Personal", "Learning", "Creative"]:
+        if mode in ["Work", "Personal"]:
             self.mode = mode
             return f"Mode switched to: {mode}"
-        return f"Invalid mode. Available: Work, Personal, Learning, Creative"
+        return f"Invalid mode. Available: Work, Personal"
 
     def get_system_prompt(self):
         relevant_facts = []
@@ -40,11 +37,6 @@ class PromptManager:
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
         elif self.mode == "Personal":
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="personal"))
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
-        elif self.mode == "Learning":
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="work")) # specific tech facts might be in work
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
-        elif self.mode == "Creative":
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
         
         relevant_facts = list(set(relevant_facts))
@@ -55,9 +47,9 @@ You are Jarvis, an intelligent system designed to be helpful, precise, and conte
 
 [CURRENT_MODE]
 Current Mode: {self.mode}
-(In Work mode, focus on productivity and technical tasks. In Personal mode, be more casual and focus on personal interests. In Learning mode, focus on education, explaining concepts clearly, and guiding the user through new topics. Break down complex ideas into manageable steps. In Creative mode, focus on brainstorming, generating innovative ideas, and thinking outside the box. Be experimental and suggest multiple diverse approaches.)
+(In Work mode, focus on productivity and technical tasks. In Personal mode, be more casual and focus on personal interests.)
 
-[RELEVANT_MEMORIES]
+[RELEVANT_MEMORIES ({self.mode})]
 {chr(10).join("- " + f for f in relevant_facts) if relevant_facts else "No relevant memories found."}
 
 [INSTRUCTIONS]
@@ -73,7 +65,7 @@ Waiting for input...
 
 class JarvisOrchestrator:
     def __init__(self):
-        self.episodic_memory = EpisodicMemory(host=CHROMA_HOST, port=CHROMA_PORT)
+        self.episodic_memory = EpisodicMemory()
         self.semantic_memory = SemanticMemory()
         self.prompt_manager = PromptManager(self.semantic_memory)
         self.tool_creator = ToolCreator()
@@ -97,7 +89,7 @@ class JarvisOrchestrator:
                         "type": "object",
                         "properties": {
                             "fact": {"type": "string"},
-                            "category": {"type": "string", "enum": ["work", "personal", "general"]}
+                            "mode": {"type": "string", "description": "The mode to save this fact to (defaults to current)."}
                         },
                         "required": ["fact"]
                     }
@@ -111,7 +103,7 @@ class JarvisOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "mode": {"type": "string", "enum": ["Work", "Personal", "Learning", "Creative"]}
+                            "mode": {"type": "string", "enum": ["Work", "Personal"]}
                         },
                         "required": ["mode"]
                     }
@@ -131,12 +123,28 @@ class JarvisOrchestrator:
                         "required": ["tool_name", "description"]
                     }
                 }
+            },
+             {
+                "type": "function",
+                "function": {
+                    "name": "delete_mode",
+                    "description": "Delete a mode and all associated memory.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                           "mode": {"type": "string"}
+                        },
+                        "required": ["mode"]
+                    }
+                }
             }
         ]
 
     async def start(self):
         print("DEBUG: Starting Jarvis Orchestrator...", flush=True)
-        # Connect to ChromaDB
+        # Connect to ChromaDB for TOOLS (Librarian) - keeping this local for now or could move to Pinecone too.
+        # User request was specifically for "memory" (episodic/semantic) separation.
+        # Tools are global capabilities usually.
         try:
             chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
             self.tool_collection = chroma_client.get_collection("tools")
@@ -145,12 +153,11 @@ class JarvisOrchestrator:
             print(f"Warning: Could not connect to ChromaDB for tools: {e}")
             self.tool_collection = None
 
-        # Start MCP Client
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         server_params = StdioServerParameters(
             command=sys.executable,
-            args=[str(SERVER_SCRIPT)], # Ensure string path
+            args=[str(SERVER_SCRIPT)], 
             env=env, 
         )
 
@@ -175,6 +182,7 @@ class JarvisOrchestrator:
 
     async def process_message(self, user_input: str):
         # Update System Prompt Dynamically
+        current_mode = self.prompt_manager.mode
         system_prompt = self.prompt_manager.get_system_prompt()
         
         system_prompt += """
@@ -185,13 +193,12 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
         
         current_history = [m for m in self.messages if m["role"] != "system"]
         
-        # Add episodic context
-        relevant_episodes = self.episodic_memory.search_episodes(user_input, n=2)
+        # Add episodic context (Partitioned by MODE)
+        relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2)
         context_msg = ""
         if relevant_episodes:
-             context_msg = f"\n[Relevant past conversations]:\n" + "\n".join(relevant_episodes)
+             context_msg = f"\n[Relevant past conversations in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
         
-        # Prepare payload
         payload_messages = [{"role": "system", "content": system_prompt}] + current_history
         payload_messages.append({"role": "user", "content": user_input + context_msg})
 
@@ -215,7 +222,6 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                     }
                 })
         else:
-            # Fallback to all MCP tools if no ChromaDB
             mcp_tools_list = await self.session.list_tools()
             current_tool_definitions.extend([
                 {
@@ -229,7 +235,6 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                 for tool in mcp_tools_list.tools
             ])
 
-        # Call LLM
         try:
             response = completion(
                 model="openai/local-model",
@@ -256,15 +261,30 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                 
                 if function_name == "save_fact":
                     print(f"Executing INTERNAL tool: {function_name}")
-                    cat = function_args.get("category", "general")
-                    result_content = self.semantic_memory.save_fact(function_args["fact"], category=cat)
+                    # Default to current mode if not specified
+                    target_mode = function_args.get("mode", current_mode)
+                    result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode)
+                    
                 elif function_name == "set_mode":
                     print(f"Executing INTERNAL tool: {function_name}")
                     result_content = self.prompt_manager.set_mode(function_args["mode"])
+                    
+                elif function_name == "delete_mode":
+                    print(f"Executing INTERNAL tool: {function_name}")
+                    mode_del = function_args["mode"]
+                    # Delete from Mongo and Pinecone
+                    sem_del = self.semantic_memory.delete_mode(mode_del)
+                    epi_del = self.episodic_memory.delete_mode_memory(mode_del)
+                    result_content = f"Deleted mode '{mode_del}'. Semantic: {sem_del}, Episodic: {epi_del}"
+                    if self.prompt_manager.mode == mode_del:
+                        self.prompt_manager.set_mode("Work") # Fallback
+                        result_content += ". Switched to 'Work'."
+
                 elif function_name == "create_tool":
                     print(f"Executing CREATION tool: {function_name}")
                     result_content = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
                     result_content += "\n(Note: You may need to restart the server or session to use this tool if it's not hot-loaded.)"
+                    
                 elif function_name in self.real_tool_names:
                     print(f"Executing REAL tool: {function_name}")
                     result = await self.session.call_tool(function_name, function_args)
@@ -280,6 +300,8 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                 })
             
             # Final Follow-up Response
+            # Note: If mode changed mid-tools, prompts should reflect new mode?
+            # Ideally re-fetch prompt.
             payload_messages = [{"role": "system", "content": self.prompt_manager.get_system_prompt()}] + [m for m in self.messages if m["role"] != "system"]
             
             second_response = completion(
@@ -294,9 +316,10 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
             final_text = final_message.content
             print(f"Jarvis: {final_text}")
             
+            # Save Episodic Memory (Partitioned)
             self.episodic_memory.add_episode(
                 content=f"User: {user_input}\nJarvis: {final_text}",
-                metadata={"type": "conversation", "mode": self.prompt_manager.mode}
+                mode=self.prompt_manager.mode
             )
             return final_text
         
@@ -305,6 +328,6 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
             print(f"Jarvis: {final_text}")
             self.episodic_memory.add_episode(
                 content=f"User: {user_input}\nJarvis: {final_text}",
-                metadata={"type": "conversation", "mode": self.prompt_manager.mode}
+                mode=self.prompt_manager.mode
             )
             return final_text

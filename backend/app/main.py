@@ -39,13 +39,13 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
     
     response = await orchestrator.process_message(request.message)
-    return {"response": response}
+    # Return current mode as well so UI can sync if tool changed it
+    return {"response": response, "current_mode": orchestrator.prompt_manager.mode}
 
 @app.get("/history")
 async def get_history():
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
-    # Return last 10 messages for simplicity
     return {"history": orchestrator.messages[-10:]}
 
 @app.post("/mode")
@@ -54,7 +54,40 @@ async def set_mode(request: ModeRequest):
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
     
     result = orchestrator.prompt_manager.set_mode(request.mode)
-    return {"status": result}
+    return {"status": result, "mode": orchestrator.prompt_manager.mode}
+
+@app.get("/modes")
+async def get_modes():
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    # Fetch distinct modes from Memory
+    modes = orchestrator.semantic_memory.get_modes()
+    return {"modes": modes, "current_mode": orchestrator.prompt_manager.mode}
+
+@app.delete("/modes/{mode_name}")
+async def delete_mode(mode_name: str):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    if mode_name == "Work":
+        return {"status": "Cannot delete default 'Work' mode."}
+        
+    orchestrator.semantic_memory.delete_mode(mode_name)
+    orchestrator.episodic_memory.delete_mode_memory(mode_name)
+    
+    # If we deleted current mode, switch to Work
+    if orchestrator.prompt_manager.mode == mode_name:
+        orchestrator.prompt_manager.set_mode("Work")
+        
+    return {"status": f"Deleted mode {mode_name}"}
+
+@app.get("/memory/{mode_name}")
+async def get_memory(mode_name: str):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    facts = orchestrator.semantic_memory.get_all_facts(mode=mode_name)
+    return {"facts": facts}
 
 @app.get("/health")
 async def health():
