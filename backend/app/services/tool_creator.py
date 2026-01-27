@@ -3,9 +3,13 @@ import json
 import subprocess
 import time
 from litellm import completion
+from pathlib import Path
 
-TOOLS_DIR = "tools"
-TOOL_DEFINITIONS_FILE = "tool_definitions.json"
+# Paths relative to this file: .../backend/app/services/tool_creator.py
+# We want tools to be in .../jarvis/tools/
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+TOOLS_DIR = BASE_DIR / "tools"
+TOOL_DEFINITIONS_FILE = BASE_DIR / "tool_definitions.json"
 
 class ToolCreator:
     def __init__(self, model="openai/local-model", api_base="http://127.0.0.1:1234/v1", api_key="lm-studio"):
@@ -104,61 +108,26 @@ class ToolCreator:
         Runs the tool and test in a Docker container.
         """
         # Create temp files
-        temp_tool_file = f"temp_{tool_name}.py"
-        temp_test_file = f"temp_{tool_name}_test.py"
+        # We should create these in the root or a temp dir to avoid cluttering deep dirs
+        temp_tool_file = BASE_DIR / f"temp_{tool_name}.py"
+        temp_test_file = BASE_DIR / f"temp_{tool_name}_test.py"
+        tool_module_path = BASE_DIR / "tool_module.py"
+        test_script_path = BASE_DIR / "test_script.py"
         
         try:
             with open(temp_tool_file, "w", encoding="utf-8") as f:
                 f.write(tool_code)
-                
-            # The test needs to import the tool. 
-            # We'll prepend the tool code to the test code for simplicity in the sandbox, 
-            # OR we can just rely on file presence if we mount the dir.
-            # Simpler approach for one-off script: Concatenate.
-            
-            # Actually, let's try to mock the import by just pasting the function at the top of the test file
-            # But the test code expects "from tool_module import ..."
-            # Let's adjust the test code or just write a unified validator.
-            
-            unified_test_code = f"""
-import sys
-import os
-
-# --- Tool Code Injected Below ---
-{tool_code}
-# ------------------------------
-
-if __name__ == "__main__":
-    try:
-        # We need to adapt the generated test code which might try to import.
-        # Let's just wrap the generated test logic.
-        # But since the LLM wrote imports, we might have issues.
-        # Hack: Ask LLM to write a self-contained test, or just strip the import line.
-        pass
-""" 
-            # Re-thinking: Safest is to mount the directory and run python.
-            # But we are in a windows environment calling docker.
-            # Let's use `docker run -v %cd%:/app ...`
-            
-            # We will create the files locally:
-            # tool_module.py (fixed name so the test can import it easily)
-            # test_script.py
-            
-            with open("tool_module.py", "w", encoding="utf-8") as f:
+         
+            with open(tool_module_path, "w", encoding="utf-8") as f:
                 f.write(tool_code)
             
-            with open("test_script.py", "w", encoding="utf-8") as f:
+            with open(test_script_path, "w", encoding="utf-8") as f:
                 f.write(test_code)
             
             print("DEBUG: Running Docker validation...")
-            # Use docker to run the test
-            # Assumes python:3.9-slim is available.
-            # We mount current directory to /app
-            cwd = os.getcwd()
             
-            # Windows path handling for Docker mount might be tricky.
-            # Let's try to just run a container and pass code via stdin or echo if simple.
-            # But mounting is reliable. 
+            # Mount BASE_DIR so docker sees the files in root
+            cwd = str(BASE_DIR)
             
             cmd = [
                 "docker", "run", "--rm",
@@ -181,10 +150,10 @@ if __name__ == "__main__":
             return False, str(e)
         finally:
             # Cleanup temp files
-            if os.path.exists("tool_module.py"):
-                os.remove("tool_module.py")
-            if os.path.exists("test_script.py"):
-                os.remove("test_script.py")
+            if os.path.exists(tool_module_path):
+                os.remove(tool_module_path)
+            if os.path.exists(test_script_path):
+                os.remove(test_script_path)
             if os.path.exists(temp_tool_file):
                  os.remove(temp_tool_file)
 
@@ -206,12 +175,7 @@ if __name__ == "__main__":
                     "input": {"type": "string", "description": "Dynamic input"}
                 }
             } 
-            # Note: We are cheating a bit on schema. In a real system, we'd ask LLM to generate the JSON schema too.
-            # For this prototype, we will assume tools take generic args or we ask LLM for the schema as well.
         }
-        
-        # Let's simple-fix the schema issue: Ask LLM for the schema during code gen or inferred.
-        # Making it simple: All tools created this way will be documented as "See description".
         
         try:
             with open(TOOL_DEFINITIONS_FILE, "r") as f:
@@ -236,10 +200,6 @@ if __name__ == "__main__":
         if err:
             return f"Failed to generate code: {err}"
             
-        # Refine Test Code to import correctly
-        # The test code generated by LLM might imagine a module name.
-        # We enforce "from tool_module import tool_name" strictly in our temp file setup.
-        # We need to ensure the test code actually does that.
         test_code = f"from tool_module import {tool_name}\n" + test_code.replace(f"from {tool_name} import", "# replaced import")
         
         success, log = self.validate_tool(tool_name, tool_code, test_code)
@@ -250,6 +210,4 @@ if __name__ == "__main__":
             return f"Validation failed for tool '{tool_name}'. Logs: {log}"
 
 if __name__ == "__main__":
-    # Test stub
     creator = ToolCreator()
-    # print(creator.create_tool("reverse_string", "Reverse the provided string text."))

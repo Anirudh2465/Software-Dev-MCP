@@ -1,8 +1,17 @@
 from fastmcp import FastMCP
 import os
+import importlib.util
+import sys
+from pathlib import Path
 
 # Create an MCP server
 mcp = FastMCP("Local Filesystem Server")
+
+# Define Paths
+# File is in jarvis/backend/scripts/filesystem_server.py
+# Root is jarvis/
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+TOOLS_DIR = BASE_DIR / "tools"
 
 @mcp.tool()
 def list_directory(path: str) -> str:
@@ -35,12 +44,6 @@ def write_file(path: str, content: str) -> str:
         return f"Successfully wrote to '{path}'."
     except Exception as e:
         return f"Error: {str(e)}"
-
-# --- Dynamic Tool Loading ---
-import importlib.util
-import sys
-
-TOOLS_DIR = "tools"
 
 def load_dynamic_tools():
     if not os.path.exists(TOOLS_DIR):

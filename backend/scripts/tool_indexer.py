@@ -2,6 +2,7 @@ import chromadb
 import json
 import os
 import sys
+from pathlib import Path
 
 # Connect to ChromaDB (assuming it's running via Docker on localhost:8000)
 try:
@@ -12,6 +13,13 @@ except Exception as e:
     sys.exit(1)
 
 COLLECTION_NAME = "tools"
+
+# Paths
+# This script: jarvis/backend/scripts/tool_indexer.py
+BASE_DIR = Path(__file__).resolve().parent.parent.parent # jarvis/
+DATA_DIR = BASE_DIR / "backend" / "data"
+DUMMY_TOOLS_PATH = DATA_DIR / "dummy_tools.json"
+TOOL_DEFINITIONS_PATH = BASE_DIR / "tool_definitions.json"
 
 def index_tools():
     # Re-create collection to ensure clean state
@@ -26,19 +34,27 @@ def index_tools():
 
     # Load dummy tools
     tools = []
-    if os.path.exists("dummy_tools.json"):
-        with open("dummy_tools.json", "r") as f:
+    if os.path.exists(DUMMY_TOOLS_PATH):
+        with open(DUMMY_TOOLS_PATH, "r") as f:
             tools.extend(json.load(f))
+    else:
+        print(f"Warning: {DUMMY_TOOLS_PATH} not found.")
 
     # Load Dynamic Tools
-    if os.path.exists("tool_definitions.json"):
-        with open("tool_definitions.json", "r") as f:
+    if os.path.exists(TOOL_DEFINITIONS_PATH):
+        with open(TOOL_DEFINITIONS_PATH, "r") as f:
             try:
                 dynamic_tools = json.load(f)
                 tools.extend(dynamic_tools)
                 print(f"Loaded {len(dynamic_tools)} dynamic tools.")
             except json.JSONDecodeError:
                 print("Warning: tool_definitions.json is empty or invalid.")
+    else:
+        print(f"Warning: {TOOL_DEFINITIONS_PATH} not found.")
+
+    if not tools:
+        print("No tools found to index.")
+        return
 
     ids = []
     documents = [] # We'll embed the description + name
