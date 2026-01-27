@@ -28,10 +28,10 @@ class PromptManager:
         self.semantic_memory = semantic_memory
     
     def set_mode(self, mode):
-        if mode in ["Work", "Personal"]:
+        if mode in ["Work", "Personal", "Learning", "Creative"]:
             self.mode = mode
             return f"Mode switched to: {mode}"
-        return f"Invalid mode. Available: Work, Personal"
+        return f"Invalid mode. Available: Work, Personal, Learning, Creative"
 
     def get_system_prompt(self):
         relevant_facts = []
@@ -40,6 +40,11 @@ class PromptManager:
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
         elif self.mode == "Personal":
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="personal"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+        elif self.mode == "Learning":
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="work")) # specific tech facts might be in work
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+        elif self.mode == "Creative":
              relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
         
         relevant_facts = list(set(relevant_facts))
@@ -50,7 +55,7 @@ You are Jarvis, an intelligent system designed to be helpful, precise, and conte
 
 [CURRENT_MODE]
 Current Mode: {self.mode}
-(In Work mode, focus on productivity and technical tasks. In Personal mode, be more casual and focus on personal interests.)
+(In Work mode, focus on productivity and technical tasks. In Personal mode, be more casual and focus on personal interests. In Learning mode, focus on education, explaining concepts clearly, and guiding the user through new topics. Break down complex ideas into manageable steps. In Creative mode, focus on brainstorming, generating innovative ideas, and thinking outside the box. Be experimental and suggest multiple diverse approaches.)
 
 [RELEVANT_MEMORIES]
 {chr(10).join("- " + f for f in relevant_facts) if relevant_facts else "No relevant memories found."}
@@ -106,7 +111,7 @@ class JarvisOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "mode": {"type": "string", "enum": ["Work", "Personal"]}
+                            "mode": {"type": "string", "enum": ["Work", "Personal", "Learning", "Creative"]}
                         },
                         "required": ["mode"]
                     }
