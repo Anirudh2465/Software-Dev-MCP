@@ -5,13 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "celery[redis]>=5.6.2",
     "chromadb>=1.4.1",
     "fastapi>=0.128.0",
     "fastmcp>=2.14.3",
     "litellm>=1.80.16",
     "mcp>=1.25.0",
+    "pinecone-client>=6.0.0",
     "pymongo>=4.16.0",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.21",
+    "sentence-transformers>=5.2.2",
+    "torch>=2.10.0",
     "uvicorn>=0.40.0",
 ]
