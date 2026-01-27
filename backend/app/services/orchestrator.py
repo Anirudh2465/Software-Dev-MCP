@@ -25,14 +25,20 @@ class PromptManager:
         self.semantic_memory = semantic_memory
     
     def set_mode(self, mode):
-        # Allow any mode, but verify if it exists or just switch to it (implicitly creating it)
-        # For better UX, we might want to ensure it exists or confirm creation. 
-        # But here flexible is better.
-        self.mode = mode
-        return f"Mode switched to: {mode}"
+        if mode in ["Work", "Personal"]:
+            self.mode = mode
+            return f"Mode switched to: {mode}"
+        return f"Invalid mode. Available: Work, Personal"
 
     def get_system_prompt(self):
-        relevant_facts = self.semantic_memory.get_all_facts(mode=self.mode) # Replaced 'category' with 'mode'
+        relevant_facts = []
+        if self.mode == "Work":
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="work"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+        elif self.mode == "Personal":
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="personal"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+        
         relevant_facts = list(set(relevant_facts))
 
         prompt = f"""
@@ -41,7 +47,7 @@ You are Jarvis, an intelligent system designed to be helpful, precise, and conte
 
 [CURRENT_MODE]
 Current Mode: {self.mode}
-(Focus your responses and tool usage according to this mode context.)
+(In Work mode, focus on productivity and technical tasks. In Personal mode, be more casual and focus on personal interests.)
 
 [RELEVANT_MEMORIES ({self.mode})]
 {chr(10).join("- " + f for f in relevant_facts) if relevant_facts else "No relevant memories found."}
@@ -97,7 +103,7 @@ class JarvisOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "mode": {"type": "string", "description": "Name of the mode to switch to."}
+                            "mode": {"type": "string", "enum": ["Work", "Personal"]}
                         },
                         "required": ["mode"]
                     }
