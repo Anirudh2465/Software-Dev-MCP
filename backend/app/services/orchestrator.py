@@ -10,6 +10,7 @@ from litellm import completion
 from pathlib import Path
 from .memory_manager import EpisodicMemory, SemanticMemory
 from .tool_creator import ToolCreator
+from .chat_service import ChatService
 
 load_dotenv()
 
@@ -30,16 +31,12 @@ class PromptManager:
             return f"Mode switched to: {mode}"
         return f"Invalid mode. Available: Work, Personal"
 
-    def get_system_prompt(self):
+    def get_system_prompt(self, user_id="default"):
         relevant_facts = []
-        if self.mode == "Work":
-             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="Work"))
-             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="General"))
-        elif self.mode == "Personal":
-             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="Personal"))
-             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="General"))
+        # Strict isolation: Only get facts for the current mode
+        relevant_facts.extend(self.semantic_memory.get_all_facts(mode=self.mode, user_id=user_id))
         
-        relevant_facts = list(set(relevant_facts))
+        relevant_facts = list(set([f['fact'] for f in relevant_facts])) # Extract fact strings
 
         prompt = f"""
 [PERSONALITY]
@@ -67,6 +64,7 @@ class JarvisOrchestrator:
     def __init__(self):
         self.episodic_memory = EpisodicMemory()
         self.semantic_memory = SemanticMemory()
+        self.chat_service = ChatService()
         self.prompt_manager = PromptManager(self.semantic_memory)
         self.tool_creator = ToolCreator()
         self.tool_collection = None
@@ -74,7 +72,7 @@ class JarvisOrchestrator:
         self.read_stream = None
         self.write_stream = None
         self.exit_stack = None
-        self.messages = []
+        # self.messages = [] # REMOVED: History is now stateless per request
         self.real_tool_names = set()
         self.helper_tools = self._define_internal_tools()
 
@@ -117,8 +115,8 @@ class JarvisOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                           "tool_name": {"type": "string", "description": "Snake_case name of the tool"},
-                           "description": {"type": "string", "description": "Detailed description of what the tool should do."}
+                            "tool_name": {"type": "string", "description": "Snake_case name of the tool"},
+                            "description": {"type": "string", "description": "Detailed description of what the tool should do."}
                         },
                         "required": ["tool_name", "description"]
                     }
@@ -132,7 +130,7 @@ class JarvisOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                           "mode": {"type": "string"}
+                            "mode": {"type": "string"}
                         },
                         "required": ["mode"]
                     }
@@ -180,10 +178,10 @@ class JarvisOrchestrator:
         if self.exit_stack:
             await self.exit_stack.aclose()
 
-    async def process_message(self, user_input: str):
+    async def process_message(self, user_input: str, user_id: str, chat_id: str):
         # Update System Prompt Dynamically
         current_mode = self.prompt_manager.mode
-        system_prompt = self.prompt_manager.get_system_prompt()
+        system_prompt = self.prompt_manager.get_system_prompt(user_id=user_id)
         
         system_prompt += """
 [TOOL_CREATION]
@@ -191,16 +189,28 @@ If you lack a specific tool to fulfill a request (e.g., specific file conversion
 After creating a tool, you may need to ask the user to 'reload' or just wait for the next turn for it to be available (in this prototype).
 """
         
-        current_history = [m for m in self.messages if m["role"] != "system"]
-        
-        # Add episodic context (Partitioned by MODE)
-        relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2)
+        # 1. Fetch Chat History (STATELESS)
+        chat_doc = self.chat_service.get_chat(chat_id, user_id)
+        current_history = []
+        if chat_doc:
+            # Convert DB messages to LLM format
+            for msg in chat_doc.get("messages", []):
+                current_history.append({"role": msg["role"], "content": msg["content"]})
+        else:
+            # Fallback (should have been created via API)
+            print(f"Warning: Chat {chat_id} not found locally, creating ephemeral context")
+
+        # Add episodic context (Partitioned by MODE and USER)
+        relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2, user_id=user_id)
         context_msg = ""
         if relevant_episodes:
              context_msg = f"\n[Relevant past conversations in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
         
         payload_messages = [{"role": "system", "content": system_prompt}] + current_history
         payload_messages.append({"role": "user", "content": user_input + context_msg})
+
+        # Save USER message to DB immediately
+        self.chat_service.add_message(chat_id, user_id, "user", user_input)
 
         # Tool Definitions
         current_tool_definitions = self.helper_tools.copy()
@@ -247,12 +257,17 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
         except Exception as e:
             return f"Error calling LLM: {e}"
 
-        self.messages.append({"role": "user", "content": user_input})
-        self.messages.append(response_message)
-
+        # Note: We don't append to self.messages anymore
+        
         if response_message.tool_calls:
             print(f"\n[Tool Call Detected]: {response_message.tool_calls[0].function.name}")
             
+            # Temporary list to hold this turn's tool interaction
+            # We need to construct a new payload because 'payload_messages' already has the user input
+            # We need to append the ASSISTANT's tool_call message, then the TOOL results.
+            
+            payload_messages.append(response_message) # Add assistant's tool call
+
             for tool_call in response_message.tool_calls:
                 function_name = tool_call.function.name
                 function_args = eval(tool_call.function.arguments) 
@@ -263,7 +278,7 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                     print(f"Executing INTERNAL tool: {function_name}")
                     # Default to current mode if not specified
                     target_mode = function_args.get("mode", current_mode)
-                    result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode)
+                    result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode, user_id=user_id)
                     
                 elif function_name == "set_mode":
                     print(f"Executing INTERNAL tool: {function_name}")
@@ -273,13 +288,13 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                     print(f"Executing INTERNAL tool: {function_name}")
                     mode_del = function_args["mode"]
                     # Delete from Mongo and Pinecone
-                    sem_del = self.semantic_memory.delete_mode(mode_del)
-                    epi_del = self.episodic_memory.delete_mode_memory(mode_del)
-                    result_content = f"Deleted mode '{mode_del}'. Semantic: {sem_del}, Episodic: {epi_del}"
+                    sem_del = self.semantic_memory.delete_mode(mode_del, user_id=user_id)
+                    epi_del = self.episodic_memory.delete_mode_memory(mode_del, user_id=user_id)
+                    result_content = f"Deleted mode '{mode_del}' for user {user_id}. Semantic: {sem_del}, Episodic: {epi_del}"
                     if self.prompt_manager.mode == mode_del:
                         self.prompt_manager.set_mode("Work") # Fallback
                         result_content += ". Switched to 'Work'."
-
+                        
                 elif function_name == "create_tool":
                     print(f"Executing CREATION tool: {function_name}")
                     result_content = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
@@ -293,7 +308,7 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                     print(f"Simulating MOCK tool: {function_name}")
                     result_content = f"Mock success: {function_name} executed with {function_args}"
                 
-                self.messages.append({
+                payload_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": result_content
@@ -302,7 +317,7 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
             # Final Follow-up Response
             # Note: If mode changed mid-tools, prompts should reflect new mode?
             # Ideally re-fetch prompt.
-            payload_messages = [{"role": "system", "content": self.prompt_manager.get_system_prompt()}] + [m for m in self.messages if m["role"] != "system"]
+            payload_messages[0] = {"role": "system", "content": self.prompt_manager.get_system_prompt(user_id=user_id)}
             
             second_response = completion(
                 model=os.getenv("LLM_MODEL", "openai/local-model"),
@@ -311,16 +326,19 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                 messages=payload_messages,
             )
             final_message = second_response.choices[0].message
-            self.messages.append(final_message)
-            
             final_text = final_message.content
             print(f"Jarvis: {final_text}")
             
             # Save Episodic Memory (Partitioned)
             self.episodic_memory.add_episode(
                 content=f"User: {user_input}\nJarvis: {final_text}",
-                mode=self.prompt_manager.mode
+                mode=self.prompt_manager.mode,
+                user_id=user_id
             )
+            
+            # Save Assistant Response to DB
+            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+            
             return final_text
         
         else:
@@ -328,6 +346,10 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
             print(f"Jarvis: {final_text}")
             self.episodic_memory.add_episode(
                 content=f"User: {user_input}\nJarvis: {final_text}",
-                mode=self.prompt_manager.mode
+                mode=self.prompt_manager.mode,
+                user_id=user_id
             )
+            # Save Assistant Response to DB
+            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+
             return final_text

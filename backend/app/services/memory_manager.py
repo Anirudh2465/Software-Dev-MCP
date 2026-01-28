@@ -29,12 +29,12 @@ class EpisodicMemory:
         except Exception as e:
             print(f"Error initializing EpisodicMemory: {e}")
 
-    def add_episode(self, content, mode="Work"):
+    def add_episode(self, content, mode="Work", user_id="default"):
         # Offload to Celery
-        print(f"Dispatching memory task for mode '{mode}'")
-        embed_and_store_episode.delay(content, mode)
+        print(f"Dispatching memory task for mode '{mode}' user '{user_id}'")
+        embed_and_store_episode.delay(content, mode, user_id)
 
-    def search_episodes(self, query, mode="Work", n=3):
+    def search_episodes(self, query, mode="Work", n=3, user_id="default"):
         if not self.client or not self.model:
             return []
             
@@ -42,7 +42,7 @@ class EpisodicMemory:
             # Generate query embedding locally independent of Celery
             query_embedding = self.model.encode(query).tolist()
             
-            collection_name = f"episodic_{mode.lower()}"
+            collection_name = f"episodic_{user_id}_{mode.lower()}"
             collection = self.client.get_or_create_collection(name=collection_name)
             
             results = collection.query(
@@ -55,16 +55,51 @@ class EpisodicMemory:
             print(f"Error searching episodes: {e}")
             return []
             
-    def delete_mode_memory(self, mode):
+    def delete_mode_memory(self, mode, user_id="default"):
         if not self.client:
             return False
         try:
-            collection_name = f"episodic_{mode.lower()}"
+            collection_name = f"episodic_{user_id}_{mode.lower()}"
             self.client.delete_collection(name=collection_name)
             return True
         except Exception as e:
             print(f"Error deleting mode {mode}: {e}")
             return False
+
+    def get_all_episodes(self, mode="Work", user_id="default"):
+        if not self.client:
+             return []
+        try:
+            collection_name = f"episodic_{user_id}_{mode.lower()}"
+            collection = self.client.get_or_create_collection(name=collection_name)
+            # get all
+            results = collection.get()
+            # Construct list of dicts
+            episodes = []
+            if results['ids']:
+                for i, id_val in enumerate(results['ids']):
+                     episodes.append({
+                         "id": id_val,
+                         "content": results['documents'][i],
+                         "metadata": results['metadatas'][i] if results['metadatas'] else {}
+                     })
+            return episodes
+        except Exception as e:
+            print(f"Error getting all episodes: {e}")
+            return []
+
+    def delete_episode(self, episode_id, mode="Work", user_id="default"):
+        if not self.client:
+             return False
+        try:
+            collection_name = f"episodic_{user_id}_{mode.lower()}"
+            collection = self.client.get_collection(name=collection_name)
+            collection.delete(ids=[episode_id])
+            return True
+        except Exception as e:
+             print(f"Error deleting episode {episode_id}: {e}")
+             return False
+
 
 class SemanticMemory:
     def __init__(self):
@@ -79,13 +114,14 @@ class SemanticMemory:
         except Exception as e:
             print(f"Error connecting to MongoDB: {e}")
 
-    def save_fact(self, fact, mode="Work"):
+    def save_fact(self, fact, mode="Work", user_id="default"):
         if self.collection is None:
             return "Error: Database not connected."
             
         doc = {
             "fact": fact,
             "mode": mode, # Partition by mode
+            "user_id": user_id,
             "timestamp": datetime.datetime.now().isoformat()
         }
         try:
@@ -94,14 +130,21 @@ class SemanticMemory:
         except Exception as e:
             return f"Error saving fact: {e}"
 
-    def get_all_facts(self, mode="Work"):
+    def get_all_facts(self, mode="Work", user_id="default"):
         if self.collection is None:
             return []
             
         try:
             # Simple partition: Just get facts for this mode
-            cursor = self.collection.find({"mode": mode}, {"_id": 0, "fact": 1})
-            return [doc["fact"] for doc in cursor]
+            cursor = self.collection.find({"mode": mode, "user_id": user_id})
+            facts = []
+            for doc in cursor:
+                facts.append({
+                    "id": str(doc["_id"]),
+                    "fact": doc["fact"],
+                    "timestamp": doc.get("timestamp", "")
+                })
+            return facts
         except Exception as e:
             print(f"Error retrieving facts: {e}")
             return []
@@ -111,17 +154,30 @@ class SemanticMemory:
             return ["Work", "Personal"] # Default
         try:
             modes = self.collection.distinct("mode")
-            return list(set(modes + ["Work", "Personal"])) # Ensure defaults exist
+            default_modes = ["Work", "Personal"]
+            all_modes = list(set(modes + default_modes))
+            return all_modes
         except Exception as e:
             print(f"Error fetching modes: {e}")
             return ["Work", "Personal"]
 
-    def delete_mode(self, mode):
+    def delete_mode(self, mode, user_id="default"):
         if self.collection is None:
             return False
         try:
-            self.collection.delete_many({"mode": mode})
+            self.collection.delete_many({"mode": mode, "user_id": user_id})
             return True
         except Exception as e:
              print(f"Error deleting mode {mode} from Mongo: {e}")
+             return False
+
+    def delete_fact(self, fact_id):
+        if self.collection is None:
+             return False
+        try:
+            from bson.objectid import ObjectId
+            self.collection.delete_one({"_id": ObjectId(fact_id)})
+            return True
+        except Exception as e:
+             print(f"Error deleting fact {fact_id}: {e}")
              return False
