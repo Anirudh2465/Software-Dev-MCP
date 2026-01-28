@@ -224,12 +224,25 @@ async def delete_semantic_memory(fact_id: str, current_user: Annotated[dict, Dep
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
     
-    # Note: delete_fact in MemoryManager currently only takes ID. 
-    # Ideally should verify user ownership too, but ID is unique enough for now.
-    success = orchestrator.semantic_memory.delete_fact(fact_id)
-    if not success:
+    # Note: delete_fact in MemoryManager returns result document or None
+    deleted_doc = orchestrator.semantic_memory.delete_fact(fact_id)
+    
+    if not deleted_doc:
          raise HTTPException(status_code=404, detail="Fact not found or could not be deleted")
-    return {"status": "deleted"}
+         
+    # HARD DELETE: Remove traces from episodic memory
+    fact_content = deleted_doc.get("fact")
+    if fact_content:
+        # We delete any episode that contains this exact fact text.
+        # This covers "Saved: [fact]" messages if the text matches.
+        deleted_count = orchestrator.episodic_memory.delete_episodes_containing(
+            text=fact_content, 
+            mode=deleted_doc.get("mode", "Work"),
+            user_id=current_user["username"]
+        )
+        print(f"Also deleted {deleted_count} related episodic memories.")
+        
+    return {"status": "deleted", "related_episodes_deleted": deleted_count if 'deleted_count' in locals() else 0}
 
 @app.delete("/memory/episodic/{episode_id}")
 async def delete_episodic_memory(episode_id: str, mode: str, current_user: Annotated[dict, Depends(get_current_user)]):

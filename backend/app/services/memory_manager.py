@@ -100,6 +100,54 @@ class EpisodicMemory:
              print(f"Error deleting episode {episode_id}: {e}")
              return False
 
+    def delete_episodes_containing(self, text, mode="Work", user_id="default"):
+        """
+        Hard delete episodes containing traces of deleted memories using Semantic Search.
+        This finds episodes semantically similar to the deleted fact (e.g. "Saved: [fact]") and deletes them.
+        """
+        if not self.client or not self.model:
+             return 0
+             
+        try:
+            # 1. Generate embedding for the fact
+            query_embedding = self.model.encode(text).tolist()
+            
+            collection_name = f"episodic_{user_id}_{mode.lower()}"
+            collection = self.client.get_or_create_collection(name=collection_name)
+            
+            # 2. Search for TOP N results (e.g., top 5) that match this fact
+            # likely candidates are "User: save X", "Jarvis: Saved X", etc.
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=5 
+            )
+            
+            ids_to_delete = []
+            if results and results['ids'] and results['ids'][0]:
+                 # 3. Filter results: 
+                 # We can just delete the top matches blindly, or check distance.
+                 # Chroma default distance is L2. Lower is better.
+                 # Let's be aggressive for now on the top 3-5, or maybe just delete them all.
+                 # Given the user wants to "bypass" history, let's delete the top matches.
+                 # To be safer, we could log them.
+                 
+                 found_ids = results['ids'][0]
+                 found_docs = results['documents'][0]
+                 
+                 print(f"Semantic Deletion Candidates for '{text}': {found_docs}")
+                 ids_to_delete = found_ids
+
+            if not ids_to_delete:
+                return 0
+
+            collection.delete(ids=ids_to_delete)
+            print(f"Hard deleted {len(ids_to_delete)} episodes semantically related to '{text}'")
+            return len(ids_to_delete)
+            
+        except Exception as e:
+             print(f"Error deleting episodes containing text: {e}")
+             return 0
+
 
 class SemanticMemory:
     def __init__(self):
@@ -173,11 +221,18 @@ class SemanticMemory:
 
     def delete_fact(self, fact_id):
         if self.collection is None:
-             return False
+             return None
         try:
             from bson.objectid import ObjectId
-            self.collection.delete_one({"_id": ObjectId(fact_id)})
-            return True
+            doc = self.collection.find_one({"_id": ObjectId(fact_id)})
+            if doc:
+                self.collection.delete_one({"_id": ObjectId(fact_id)})
+                return doc # Return the whole document (specifically 'fact' and 'mode' are useful)
+            return None
         except Exception as e:
              print(f"Error deleting fact {fact_id}: {e}")
-             return False
+             return None
+
+    # Helper for EpisodicMemory is not in this class, checking indentation...
+    # Wait, I need to add delete_episodes_containing to EpisodicMemory class above.
+

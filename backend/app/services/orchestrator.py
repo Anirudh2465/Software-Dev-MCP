@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import chromadb
+import importlib.util
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -54,6 +55,7 @@ Current Mode: {self.mode}
 2. You MUST use the <thinking> tag to plan your actions step-by-step before executing ANY tools.
 3. If a complex request requires multiple steps, outline them in your thinking block.
 4. "Who am I?" questions should count on the memories provided above.
+5. [RELEVANT_MEMORIES] is the ONLY source of truth for active facts. If a fact is not listed there, do not consider it a current memory, even if it appears in [Historical Context].
 
 [SCRATCHPAD]
 Waiting for input...
@@ -75,6 +77,8 @@ class JarvisOrchestrator:
         # self.messages = [] # REMOVED: History is now stateless per request
         self.real_tool_names = set()
         self.helper_tools = self._define_internal_tools()
+        self.dynamic_tools = {} # Registry for hot-loaded tools
+        self.dynamic_tool_definitions = [] # Definitions for hot-loaded tools
 
     def _define_internal_tools(self):
         return [
@@ -138,6 +142,52 @@ class JarvisOrchestrator:
             }
         ]
 
+    def _load_dynamic_tool(self, tool_name, file_path):
+        """
+        Dynamically loads a tool from a file path and registers it.
+        """
+        try:
+            spec = importlib.util.spec_from_file_location(tool_name, file_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                if hasattr(module, tool_name):
+                    func = getattr(module, tool_name)
+                    self.dynamic_tools[tool_name] = func
+                    
+                    # Update definitions
+                    # We read the file from disk to get the definition
+                    # The tool_creator saves it to tool_definitions.json
+                    # We can find it there.
+                    try:
+                        defs_path = Path(file_path).parent.parent / "tool_definitions.json"
+                        if defs_path.exists():
+                            with open(defs_path, "r") as f:
+                                defs = json.load(f)
+                                for d in defs:
+                                    if d["name"] == tool_name:
+                                        # Check if already exists to avoid duplicates
+                                        if not any(td["function"]["name"] == tool_name for td in self.dynamic_tool_definitions):
+                                            self.dynamic_tool_definitions.append({
+                                                "type": "function",
+                                                "function": {
+                                                    "name": d["name"],
+                                                    "description": d["description"],
+                                                    "parameters": d["inputSchema"]
+                                                }
+                                            })
+                                        break
+                    except Exception as ex:
+                        print(f"Error loading definition for {tool_name}: {ex}")
+
+                    print(f"DEBUG: Dynamically loaded tool '{tool_name}'")
+                    return True
+        except Exception as e:
+            print(f"Error loading dynamic tool {tool_name}: {e}")
+            return False
+        return False
+
     async def start(self):
         print("DEBUG: Starting Jarvis Orchestrator...", flush=True)
         # Connect to ChromaDB for TOOLS (Librarian) - keeping this local for now or could move to Pinecone too.
@@ -185,8 +235,11 @@ class JarvisOrchestrator:
         
         system_prompt += """
 [TOOL_CREATION]
-If you lack a specific tool to fulfill a request (e.g., specific file conversion, calculation), use 'create_tool' to build it.
-After creating a tool, you may need to ask the user to 'reload' or just wait for the next turn for it to be available (in this prototype).
+If you lack a specific tool to fulfill a request (e.g., specific file conversion, any calculation, data processing), you MUST use 'create_tool' to build it.
+DO NOT provide Python code snippets to start unless explicitly asked.
+DO NOT calculate manually or simulate the result.
+Always prefer expanding your capabilities by creating a reusable tool.
+After creating a tool, it will be auto-loaded and available immediately.
 """
         
         # 1. Fetch Chat History (STATELESS)
@@ -204,7 +257,7 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
         relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2, user_id=user_id)
         context_msg = ""
         if relevant_episodes:
-             context_msg = f"\n[Relevant past conversations in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
+             context_msg = f"\n[Historical Context (May be outdated) in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
         
         payload_messages = [{"role": "system", "content": system_prompt}] + current_history
         payload_messages.append({"role": "user", "content": user_input + context_msg})
@@ -213,7 +266,7 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
         self.chat_service.add_message(chat_id, user_id, "user", user_input)
 
         # Tool Definitions
-        current_tool_definitions = self.helper_tools.copy()
+        current_tool_definitions = self.helper_tools.copy() + self.dynamic_tool_definitions.copy()
 
         # Dynamic Retrieval from ChromaDB
         if self.tool_collection is not None:
@@ -297,9 +350,31 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
                         
                 elif function_name == "create_tool":
                     print(f"Executing CREATION tool: {function_name}")
-                    result_content = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
-                    result_content += "\n(Note: You may need to restart the server or session to use this tool if it's not hot-loaded.)"
+                    result = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
                     
+                    if isinstance(result, dict) and result.get("status") == "success":
+                        result_content = result["message"]
+                        tool_name_created = result["tool_name"]
+                        file_path = result["file_path"]
+                        
+                        # Dynamic Load
+                        if self._load_dynamic_tool(tool_name_created, file_path):
+                             result_content += f"\nTool '{tool_name_created}' hot-loaded and ready."
+                             # Make it available immediately for the follow-up response
+                             if self.dynamic_tool_definitions:
+                                 current_tool_definitions.append(self.dynamic_tool_definitions[-1])
+                    else:
+                        result_content = str(result)
+                        
+                elif function_name in self.dynamic_tools:
+                    print(f"Executing DYNAMIC tool: {function_name}")
+                    try:
+                        func = self.dynamic_tools[function_name]
+                        # Assume func takes kwargs matching the args
+                        result_content = str(func(**function_args))
+                    except Exception as e:
+                        result_content = f"Error executing tool {function_name}: {e}"
+
                 elif function_name in self.real_tool_names:
                     print(f"Executing REAL tool: {function_name}")
                     result = await self.session.call_tool(function_name, function_args)

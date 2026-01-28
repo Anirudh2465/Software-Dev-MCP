@@ -12,5 +12,19 @@
                 }
             }
         }
+    },
+    {
+        "name": "multiply_numbers",
+        "description": "Multiply two numbers",
+        "filename": "multiply_numbers.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
     }
 ]

@@ -64,19 +64,50 @@ export default function MemoryPage() {
         }
     };
 
+    const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+
     const deleteFact = async (id: string) => {
+        if (!confirm('Are you sure you want to delete this memory? This will also wipe related conversation history.')) return;
+
+        // Optimistic UI Update
+        setDeletingIds(prev => new Set(prev).add(id));
+        const originalMemories = { ...memories };
+        setMemories(prev => ({
+            ...prev,
+            semantic: prev.semantic.filter(item => item.id !== id)
+        }));
+
         try {
             const token = localStorage.getItem('token');
             await axios.delete(`${API_URL}/memory/semantic/${id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
+            // Success - background refresh to ensure sync
             fetchMemories();
         } catch (err) {
             console.error("Failed to delete fact", err);
+            alert("Failed to delete memory. Please try again.");
+            // Revert on failure
+            setMemories(originalMemories);
+        } finally {
+            setDeletingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(id);
+                return newSet;
+            });
         }
     };
 
     const deleteEpisode = async (id: string) => {
+        if (!confirm('Delete this conversation snippet?')) return;
+
+        setDeletingIds(prev => new Set(prev).add(id));
+        const originalMemories = { ...memories };
+        setMemories(prev => ({
+            ...prev,
+            episodic: prev.episodic.filter(item => item.id !== id)
+        }));
+
         try {
             const token = localStorage.getItem('token');
             await axios.delete(`${API_URL}/memory/episodic/${id}?mode=${selectedMode}`, {
@@ -85,6 +116,14 @@ export default function MemoryPage() {
             fetchMemories();
         } catch (err) {
             console.error("Failed to delete episode", err);
+            alert("Failed to delete episode.");
+            setMemories(originalMemories);
+        } finally {
+            setDeletingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(id);
+                return newSet;
+            });
         }
     };
 
@@ -108,8 +147,8 @@ export default function MemoryPage() {
                                 key={mode}
                                 onClick={() => setSelectedMode(mode)}
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${selectedMode === mode
-                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                                        : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                                    : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
                                     }`}
                             >
                                 {mode}
@@ -142,12 +181,13 @@ export default function MemoryPage() {
                                         <Card className="!p-4 bg-white/5 hover:bg-white/10 transition-colors group relative border-l-4 border-l-blue-500">
                                             <p className="text-gray-200 pr-8">{item.fact}</p>
                                             <span className="text-xs text-gray-500 mt-2 block">{new Date(item.timestamp).toLocaleString()}</span>
-                                            <button
+                                            {/* <button
                                                 onClick={() => deleteFact(item.id)}
-                                                className="absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                disabled={deletingIds.has(item.id)}
+                                                className={`absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ${deletingIds.has(item.id) ? 'opacity-100 cursor-not-allowed' : ''}`}
                                             >
-                                                <Trash2 size={18} />
-                                            </button>
+                                                {deletingIds.has(item.id) ? <Activity className="animate-spin" size={18} /> : <Trash2 size={18} />}
+                                            </button> */}
                                         </Card>
                                     </motion.div>
                                 ))}
@@ -182,9 +222,10 @@ export default function MemoryPage() {
                                             </span>
                                             <button
                                                 onClick={() => deleteEpisode(item.id)}
-                                                className="absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                disabled={deletingIds.has(item.id)}
+                                                className={`absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ${deletingIds.has(item.id) ? 'opacity-100 cursor-not-allowed' : ''}`}
                                             >
-                                                <Trash2 size={18} />
+                                                {deletingIds.has(item.id) ? <Activity className="animate-spin" size={18} /> : <Trash2 size={18} />}
                                             </button>
                                         </Card>
                                     </motion.div>

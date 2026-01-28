@@ -205,9 +205,18 @@ class ToolCreator:
         success, log = self.validate_tool(tool_name, tool_code, test_code)
         
         if success:
-            return self.save_tool(tool_name, tool_code, description)
+            save_msg = self.save_tool(tool_name, tool_code, description)
+            return {
+                "status": "success",
+                "message": save_msg,
+                "tool_name": tool_name,
+                "file_path": os.path.join(TOOLS_DIR, f"{tool_name}.py")
+            }
         else:
-            return f"Validation failed for tool '{tool_name}'. Logs: {log}"
+            return {
+                "status": "error",
+                "message": f"Validation failed for tool '{tool_name}'. Logs: {log}"
+            }
 
 if __name__ == "__main__":
     creator = ToolCreator()
