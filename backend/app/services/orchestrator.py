@@ -33,11 +33,11 @@ class PromptManager:
     def get_system_prompt(self):
         relevant_facts = []
         if self.mode == "Work":
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="work"))
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="Work"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="General"))
         elif self.mode == "Personal":
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="personal"))
-             relevant_facts.extend(self.semantic_memory.get_all_facts(category="general"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="Personal"))
+             relevant_facts.extend(self.semantic_memory.get_all_facts(mode="General"))
         
         relevant_facts = list(set(relevant_facts))
 
@@ -237,9 +237,9 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
 
         try:
             response = completion(
-                model="openai/local-model",
-                api_base="http://127.0.0.1:1234/v1",
-                api_key="lm-studio",
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
                 messages=payload_messages,
                 tools=current_tool_definitions,
             )
@@ -305,9 +305,9 @@ After creating a tool, you may need to ask the user to 'reload' or just wait for
             payload_messages = [{"role": "system", "content": self.prompt_manager.get_system_prompt()}] + [m for m in self.messages if m["role"] != "system"]
             
             second_response = completion(
-                model="openai/local-model",
-                api_base="http://127.0.0.1:1234/v1",
-                api_key="lm-studio",
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
                 messages=payload_messages,
             )
             final_message = second_response.choices[0].message

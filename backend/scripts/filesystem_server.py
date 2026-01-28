@@ -65,9 +65,9 @@ def load_dynamic_tools():
                         func = getattr(module, tool_name)
                         # Register with FastMCP
                         mcp.tool()(func)
-                        print(f"Loaded dynamic tool: {tool_name}")
+                        pass
             except Exception as e:
-                print(f"Failed to load tool {tool_name}: {e}")
+                pass
 
 load_dynamic_tools()
 

@@ -222,8 +222,8 @@ export default function Home() {
 
                   <div
                     className={`p-3 rounded-2xl max-w-[80%] whitespace-pre-wrap ${msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-br-none"
-                        : "bg-gray-800 text-gray-200 rounded-bl-none border border-gray-700"
+                      ? "bg-blue-600 text-white rounded-br-none"
+                      : "bg-gray-800 text-gray-200 rounded-bl-none border border-gray-700"
                       }`}
                   >
                     {msg.content}

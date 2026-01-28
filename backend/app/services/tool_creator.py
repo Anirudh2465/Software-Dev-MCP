@@ -12,10 +12,10 @@ TOOLS_DIR = BASE_DIR / "tools"
 TOOL_DEFINITIONS_FILE = BASE_DIR / "tool_definitions.json"
 
 class ToolCreator:
-    def __init__(self, model="openai/local-model", api_base="http://127.0.0.1:1234/v1", api_key="lm-studio"):
-        self.model = model
-        self.api_base = api_base
-        self.api_key = api_key
+    def __init__(self, model=None, api_base=None, api_key=None):
+        self.model = model or os.getenv("LLM_MODEL", "openai/local-model")
+        self.api_base = api_base or os.getenv("LLM_API_BASE", "http://localhost:1234/v1")
+        self.api_key = api_key or os.getenv("LLM_API_KEY", "lm-studio")
         
         if not os.path.exists(TOOLS_DIR):
             os.makedirs(TOOLS_DIR)

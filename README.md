@@ -4,118 +4,122 @@ Jarvis is an intelligent agentic system designed to bridge the gap between Large
 
 ## 🧠 Core Architecture
 
-1.  **Orchestrator (`orchestrator.py`)**: The central brain. It maintains the chat loop, manages conversation history (Episodic Memory), and connects the LLM (Gemini) to local tools.
-2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations and **dynamically loads new tools**.
-3.  **Tool Creator (`tool_creator.py`)**: The evolution engine. It detects missing capabilities, generates Python code, **validates it in a Docker sandbox**, and registers it for immediate use.
-4.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve relevant tools.
-5.  **Memory Vault**: 
-    - **MongoDB (Semantic Memory)**: Stores permanent user facts (e.g., "User prefers dark mode").
-    - **ChromaDB (Episodic Memory)**: Stores conversation history for context retrieval.
+1.  **Orchestrator (Backend)**: built with **FastAPI**, serving as the central brain. It maintains the chat loop, manages conversation history (Episodic Memory), and connects the LLM (Local LM Studio) to local tools.
+2.  **Frontend**: A modern Web UI built with **Next.js** and **Tailwind CSS**.
+3.  **Task Queue**: **Celery** + **Redis** for background tool execution and heavy lifting.
+4.  **Memory Vault**:
+    *   **MongoDB (Semantic Memory)**: Stores permanent user facts.
+    *   **ChromaDB (Episodic Memory)**: Stores conversation history for context retrieval.
+    *   **Redis**: Caching and task brokerage.
+
+---
 
 ## 🛠️ Prerequisites
 
--   **Docker Desktop**: **REQUIRED** for running MongoDB, ChromaDB, and **validating new tools**.
--   **Python 3.12+**
--   **uv** (Recommended) or **pip**: For dependency management.
+Before you begin, ensure you have the following installed:
 
-## 🚀 Installation & Setup
+1.  **Docker Desktop** (Required for databases) - [Download](https://www.docker.com/products/docker-desktop/)
+2.  **Python 3.12+** (Backend runtime)
+3.  **uv** (Recommended Python package manager) - [Installation Guide](https://docs.astral.sh/uv/getting-started/installation/)
+    *   *Alternative*: `pip` (standard).
+4.  **Node.js 18+** & **npm** (Frontend runtime) - [Download](https://nodejs.org/)
 
-### 1. Clone the Repository
+---
+
+## 🚀 Execution Instructions (From Scratch)
+
+Follow these steps EXACTLY to run the system.
+
+### 1. Start Infrastructure (Docker)
+Launch the database services (MongoDB, ChromaDB, Redis).
+
 ```bash
-git clone <your-repo-url>
-cd jarvis
+# In the project root directory
+docker compose up -d
+```
+*Wait for containers to be healthy.*
+
+### 2. Backend Setup & Run
+
+It is highly recommended to use `uv` for fast dependency management.
+
+**A. Configure Environment**
+Create a `.env` file in the **project root** directory (if not exists) and add your keys:
+```ini
+# Local LM Studio Configuration
+LLM_API_BASE=http://localhost:1234/v1
+LLM_MODEL=openai/local-model
+LLM_API_KEY=lm-studio
+
+# Database Configuration
+REDIS_URL=redis://localhost:6379/0
+MONGODB_URL=mongodb://localhost:27017/jarvis
+CHROMA_DB_PATH=./data/chroma
 ```
 
-### 2. Environment Setup
-
-**Option A: Using `uv` (Recommended)**
+**B. Install Dependencies**
 ```bash
-# Initialize and sync dependencies
+# In the project root directory
 uv sync
 ```
 
-**Option B: Using `pip`**
+**C. Start Backend Server**
 ```bash
-python -m venv .venv
-# Activate venv:
-# Windows: .venv\Scripts\activate
-# Linux/Mac: source .venv/bin/activate
-
-pip install -r requirements.txt
+# In the project root directory
+uv run uvicorn backend.app.main:app --reload --port 8001
 ```
+*   Backend API will be running at: `http://localhost:8001`
+*   API Docs: `http://localhost:8001/docs`
 
-### 3. Configure Secrets
-Create a `.env` file in the root directory and add your Google Gemini API key:
-```ini
-GEMINI_API_KEY=your_api_key_here
-```
+### 3. Start Background Worker (Celery)
 
-### 4. Start Infrastructure
-Launch the database services (MongoDB & ChromaDB) using Docker:
+The worker handles background tasks like tool validation and execution. Open a **new terminal**.
+
 ```bash
-docker compose up -d
+# In the project root directory
+uv run celery -A backend.app.celery_app worker --loglevel=info --pool=solo
 ```
-*   **MongoDB**: `localhost:27017`
-*   **ChromaDB**: `localhost:8000`
+*Note for Windows users: `--pool=solo` is often required for Celery to work correctly.*
 
-## ✅ Verification & Initialization
+### 4. Frontend Setup & Run
 
-Before running the agent, verify your setup:
+Open a **new terminal**.
 
-1.  **Verify Connections**:
-    ```bash
-    uv run verification_script.py
-    # OR
-    python verification_script.py
-    ```
-
-2.  **Populate Tool Index (The Librarian)**:
-    Run this **once** to index the dummy tools.
-    ```bash
-    uv run tool_indexer.py
-    # OR
-    python tool_indexer.py
-    ```
-
-## 🎮 How to Run "Jarvis"
-
-Start the agent:
 ```bash
-uv run orchestrator.py
-# OR
-python orchestrator.py
+# Navigate to frontend directory
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
 ```
+*   Frontend will be accessible at: `http://localhost:3000`
 
-### Feature Usage Guide
+---
 
-#### 1. Agentic Memory ("Who am I?")
-Jarvis remembers facts about you across sessions.
--   **Tell Jarvis a fact**: "I am a Python developer living in Seattle."
--   **Ask about it later**: "Where do I live?" (Even after restarting the agent).
+## ✅ Verification
 
-#### 2. Mode Switching
-Control Jarvis's personality and context using modes.
--   **Work Mode** (Default): Focuses on productivity and work-related facts.
--   **Personal Mode**: Focuses on personal interests and casual conversation.
--   **Switching**: 
-    -   *User*: "Switch to Personal mod."
-    -   *Jarvis*: "Mode switched to: Personal"
+1.  Open `http://localhost:3000` in your browser.
+2.  You should see the Chat Interface.
+3.  Type "Hello" to check if the Backend is connected.
+4.  If the backend is running, you will get a response from Jarvis.
 
-#### 3. Standard Tools
--   **Filesystem**: "List files in the current directory."
--   **RAG Retrieval**: "Add a meeting to my calendar." (retrieves relevant calendar tools).
-
-#### 4. Tool Creation (Self-Evolution)
-Jarvis can create new tools if it lacks a specific capability.
--   **Trigger**: Ask for something it cannot do yet.
-    -   *User*: "Calculate the Fibonacci sequence for the first 10 numbers."
-    -   *Jarvis*: "I don't have a tool for that. Creating `fibonacci` tool..."
--   **Validation**: Jarvis writes the code and runs it in a Docker container to ensure safety and correctness.
--   **Availability**: Once created, the tool is saved to `tools/` and can be used (note: may require a restart in the current prototype).
+---
 
 ## 📂 Troubleshooting
 
--   **Database Connection Errors**: Ensure Docker Desktop is running and containers are up (`docker ps`).
--   **Tool Validation Failed**: Ensure `docker` is available in your PATH. The Tool Creator uses the `python:3.9-slim` image to validate code.
--   **Import Errors**: Ensure you have installed dependencies (`uv sync` or `pip install -r requirements.txt`).
--   **API Key Error**: Double-check your `.env` file.
+*   **Database Connection Failed**: Ensure Docker containers are running (`docker ps`).
+*   **"Orchestrator not ready" error**: The backend server takes a moment to initialize the agent. Wait a few seconds after starting the backend.
+*   **Celery Worker warnings**: If on Windows, ensure you used the `--pool=solo` flag.
+*   **Frontend connection refused**: Ensure the backend is running on port `8000` and the frontend `.env` (if any) points to it.
+
+---
+
+## 🤝 Project Structure
+
+*   `backend/`: FastAPI application and Python logic.
+*   `frontend/`: Next.js web application.
+*   `data/`: Persistent storage for databases (gitignored).
+*   `docker-compose.yml`: Database orchestration.
