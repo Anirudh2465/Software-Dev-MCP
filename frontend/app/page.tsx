@@ -7,11 +7,23 @@ import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Cpu, User as UserIcon, Sparkles, ArrowUp } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
 const API_URL = 'http://localhost:8001';
 
 export default function Home() {
   const { user, isLoading: authLoading } = useAuth();
+  // ... (rest of component unchanged until return)
+
+  // [Skipping to message render part]
+  // I will use two separate replace calls if needed, but I can't look-ahead easily.
+  // Actually, I can allow multiple changes or just do one big replace if I include enough context. 
+  // But the imports are at line 9, and usage at line 241. Too far apart.
+  // I will split this into two tool calls. First adds imports.
+
   const router = useRouter();
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
@@ -238,7 +250,41 @@ export default function Home() {
                       ? 'bg-indigo-600/20 border border-indigo-500/30 text-white rounded-tr-none'
                       : 'bg-white/10 border border-white/10 text-gray-100 rounded-tl-none'
                       }`}>
-                      <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      <div className="markdown-content text-sm md:text-base">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm, remarkMath]}
+                          rehypePlugins={[rehypeKatex]}
+                          components={{
+                            table: ({ node, ...props }) => <div className="overflow-x-auto my-4 rounded-lg border border-white/10"><table className="w-full border-collapse text-left" {...props} /></div>,
+                            thead: ({ node, ...props }) => <thead className="bg-white/10" {...props} />,
+                            th: ({ node, ...props }) => <th className="border-b border-white/10 px-4 py-3 font-semibold text-blue-200" {...props} />,
+                            td: ({ node, ...props }) => <td className="border-b border-white/5 px-4 py-2" {...props} />,
+                            p: ({ node, ...props }) => <p className="mb-2 last:mb-0 leading-relaxed" {...props} />,
+                            ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-2 space-y-1" {...props} />,
+                            ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-2 space-y-1" {...props} />,
+                            li: ({ node, ...props }) => <li className="ml-2" {...props} />,
+                            a: ({ node, ...props }) => <a className="text-blue-400 hover:text-blue-300 underline" target="_blank" rel="noopener noreferrer" {...props} />,
+                            strong: ({ node, ...props }) => <strong className="font-bold text-blue-100" {...props} />,
+                            h1: ({ node, ...props }) => <h1 className="text-xl font-bold mb-2 mt-4 text-blue-200" {...props} />,
+                            h2: ({ node, ...props }) => <h2 className="text-lg font-bold mb-2 mt-3 text-blue-200" {...props} />,
+                            h3: ({ node, ...props }) => <h3 className="text-md font-bold mb-1 mt-2 text-blue-200" {...props} />,
+                            code: ({ node, inline, className, children, ...props }: any) => {
+                              const match = /language-(\w+)/.exec(className || '')
+                              return !inline ? (
+                                <div className="bg-black/40 rounded-lg p-3 my-2 overflow-x-auto border border-white/5 font-mono text-sm">
+                                  <code className={className} {...props}>{children}</code>
+                                </div>
+                              ) : (
+                                <code className="bg-white/10 rounded px-1.5 py-0.5 font-mono text-xs text-blue-100" {...props}>
+                                  {children}
+                                </code>
+                              )
+                            }
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
                     </div>
                   </motion.div>
                 ))}

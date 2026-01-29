@@ -14,9 +14,61 @@
         }
     },
     {
+        "name": "fibonacci",
+        "description": "Calculate the nth Fibonacci number.",
+        "filename": "fibonacci.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "n_str": {
+                    "type": "string",
+                    "description": "The index n (0-based) as a string."
+                }
+            },
+            "required": [
+                "n_str"
+            ]
+        }
+    },
+    {
         "name": "multiply_numbers",
         "description": "Multiply two numbers",
         "filename": "multiply_numbers.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "vision_analysis",
+        "description": "Analyze an image using a local vision model to describe contents, colors, and layout.",
+        "filename": "vision_analysis.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "image_path": {
+                    "type": "string",
+                    "description": "Absolute path to the image file."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Question about the image (default: 'Describe this image')."
+                }
+            },
+            "required": [
+                "image_path"
+            ]
+        }
+    },
+    {
+        "name": "factorial_calc",
+        "description": "Calculates the factorial of a non-negative integer provided as input string and returns the result as a string.",
+        "filename": "factorial_calc.py",
         "inputSchema": {
             "type": "object",
             "properties": {

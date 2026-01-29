@@ -8,3 +8,7 @@ passlib[argon2]
 python-jose[cryptography]
 python-multipart
 argon2-cffi
+pypdf
+python-docx
+Pillow
+pytesseract

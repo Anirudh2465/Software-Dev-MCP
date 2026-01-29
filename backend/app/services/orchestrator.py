@@ -11,10 +11,13 @@ from litellm import completion
 from pathlib import Path
 from .memory_manager import EpisodicMemory, SemanticMemory
 from .tool_creator import ToolCreator
+from .document_manager import DocumentManager
 from .chat_service import ChatService
 from ..prompts import get_persona_prompt
 
-load_dotenv()
+# ... [imports]
+
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 SERVER_SCRIPT = BASE_DIR / "backend" / "scripts" / "filesystem_server.py"
@@ -79,6 +82,7 @@ class JarvisOrchestrator:
         self.chat_service = ChatService()
         self.prompt_manager = PromptManager(self.semantic_memory)
         self.tool_creator = ToolCreator()
+        self.document_manager = DocumentManager()
         self.tool_collection = None
         self.session = None
         self.read_stream = None
@@ -203,7 +207,7 @@ class JarvisOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "create_tool",
-                    "description": "Create a new Python tool for a missing capability. Generates code, validates in Docker, and registers it.",
+                    "description": "REQUIRED: Use this tool to create new python tools for any missing capability. DO NOT write code in the chat response; call this tool instead.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -240,6 +244,62 @@ class JarvisOrchestrator:
                             "persona": {"type": "string", "enum": ["Generalist", "Coder", "Architect", "Sentinel"]}
                         },
                         "required": ["persona"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_pdf",
+                    "description": "Read and index a PDF file to extract text for querying.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute path to the PDF file."}
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_docx",
+                    "description": "Read and index a Word document (.docx) to extract text/tables for querying.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute path to the .docx file."}
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_image",
+                    "description": "Read and index text from an image (OCR). Supports PNG, JPG, BMP.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute path to the image file."}
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_text_file",
+                    "description": "Read and index a plain text or code file (txt, md, py, js, etc.).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute path to the file."}
+                        },
+                        "required": ["file_path"]
                     }
                 }
             }
@@ -349,9 +409,16 @@ After creating a tool, it will be auto-loaded and available immediately.
 
         # Add episodic context (Partitioned by MODE and USER)
         relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2, user_id=user_id)
+        
+        # DOCUMENT SEARCH (RAG)
+        relevant_docs = self.document_manager.search_documents(user_input)
+        
         context_msg = ""
         if relevant_episodes:
              context_msg = f"\n[Historical Context (May be outdated) in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
+             
+        if relevant_docs:
+             context_msg += f"\n[Document Context]:\n" + "\n".join(relevant_docs)
         
         # STATE REMINDER: Force priority of Semantic Memory over Chat History
         # We re-fetch facts to ensure we have the absolute latest state
@@ -484,6 +551,11 @@ Active Memories:
                 elif function_name == "switch_persona":
                     print(f"Executing INTERNAL tool: {function_name}")
                     result_content = self.prompt_manager.set_persona(function_args["persona"])
+                
+                elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file", "read_file"]:
+                    print(f"Executing INTERNAL tool: {function_name}")
+                    # All file tools map to the unified ingest_file method
+                    result_content = self.document_manager.ingest_file(function_args["file_path"])
                         
                 elif function_name == "create_tool":
                     print(f"Executing CREATION tool: {function_name}")

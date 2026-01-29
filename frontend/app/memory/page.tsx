@@ -181,13 +181,13 @@ export default function MemoryPage() {
                                         <Card className="!p-4 bg-white/5 hover:bg-white/10 transition-colors group relative border-l-4 border-l-blue-500">
                                             <p className="text-gray-200 pr-8">{item.fact}</p>
                                             <span className="text-xs text-gray-500 mt-2 block">{new Date(item.timestamp).toLocaleString()}</span>
-                                            {/* <button
+                                            <button
                                                 onClick={() => deleteFact(item.id)}
                                                 disabled={deletingIds.has(item.id)}
                                                 className={`absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ${deletingIds.has(item.id) ? 'opacity-100 cursor-not-allowed' : ''}`}
                                             >
                                                 {deletingIds.has(item.id) ? <Activity className="animate-spin" size={18} /> : <Trash2 size={18} />}
-                                            </button> */}
+                                            </button>
                                         </Card>
                                     </motion.div>
                                 ))}
