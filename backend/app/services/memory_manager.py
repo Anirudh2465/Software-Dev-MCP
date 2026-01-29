@@ -115,11 +115,11 @@ class EpisodicMemory:
             collection_name = f"episodic_{user_id}_{mode.lower()}"
             collection = self.client.get_or_create_collection(name=collection_name)
             
-            # 2. Search for TOP N results (e.g., top 5) that match this fact
+            # 2. Search for TOP N results (e.g., top 10) that match this fact
             # likely candidates are "User: save X", "Jarvis: Saved X", etc.
             results = collection.query(
                 query_embeddings=[query_embedding],
-                n_results=5 
+                n_results=10 
             )
             
             ids_to_delete = []

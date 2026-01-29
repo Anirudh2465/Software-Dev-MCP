@@ -18,6 +18,8 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 SERVER_SCRIPT = BASE_DIR / "backend" / "scripts" / "filesystem_server.py"
+TOOLS_DIR = BASE_DIR / "tools"
+TOOL_DEFINITIONS_FILE = BASE_DIR / "tool_definitions.json"
 
 CHROMA_HOST = "localhost"
 CHROMA_PORT = 8000
@@ -87,6 +89,84 @@ class JarvisOrchestrator:
         self.helper_tools = self._define_internal_tools()
         self.dynamic_tools = {} # Registry for hot-loaded tools
         self.dynamic_tool_definitions = [] # Definitions for hot-loaded tools
+        
+        # Initialize Tool DB Client
+        try:
+            print("Connecting to ChromaDB for Tools...")
+            self.chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+            self.tool_collection = self.chroma_client.get_or_create_collection("tools")
+            print("Connected to ChromaDB 'tools' collection.")
+        except Exception as e:
+            print(f"Warning: Could not connect to ChromaDB for tools: {e}")
+            self.tool_collection = None
+            
+        self._load_all_existing_tools()
+
+    def _load_all_existing_tools(self):
+        """
+        Loads all tools defined in tool_definitions.json on startup and indexes them.
+        """
+        if not TOOL_DEFINITIONS_FILE.exists():
+            print("Warning: tool_definitions.json not found.", flush=True)
+            return
+
+        try:
+            with open(TOOL_DEFINITIONS_FILE, "r") as f:
+                defs = json.load(f)
+            
+            for tool_def in defs:
+                name = tool_def["name"]
+                filename = tool_def["filename"]
+                file_path = TOOLS_DIR / filename
+                
+                if not file_path.exists():
+                    print(f"Warning: Tool file {file_path} not found for {name}", flush=True)
+                    continue
+                    
+                # Load module
+                try:
+                    spec = importlib.util.spec_from_file_location(name, str(file_path))
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        
+                        if hasattr(module, name):
+                            func = getattr(module, name)
+                            self.dynamic_tools[name] = func
+                            
+                            # Add definition
+                            tool_definition_struct = {
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "description": tool_def["description"],
+                                    "parameters": tool_def["inputSchema"]
+                                }
+                            }
+                            self.dynamic_tool_definitions.append(tool_definition_struct)
+                            
+                            # Index in ChromaDB
+                            if self.tool_collection:
+                                try:
+                                    # Use description + name as document content
+                                    doc_content = f"{name}: {tool_def['description']}"
+                                    self.tool_collection.upsert(
+                                        ids=[name],
+                                        documents=[doc_content],
+                                        metadatas=[{"json": json.dumps(tool_def)}]
+                                    )
+                                    print(f"DEBUG: Indexed tool '{name}' in ChromaDB", flush=True)
+                                except Exception as idx_err:
+                                    print(f"Error indexing tool {name}: {idx_err}", flush=True)
+                                    
+                            print(f"DEBUG: Loaded existing tool '{name}'", flush=True)
+                        else:
+                            print(f"Error: Function {name} not found in {filename}", flush=True)
+                except Exception as e:
+                    print(f"Error loading tool {name}: {e}", flush=True)
+                    
+        except Exception as e:
+            print(f"Error reading tool definitions: {e}", flush=True)
 
     def _define_internal_tools(self):
         return [
@@ -184,7 +264,7 @@ class JarvisOrchestrator:
                     # The tool_creator saves it to tool_definitions.json
                     # We can find it there.
                     try:
-                        defs_path = Path(file_path).parent.parent / "tool_definitions.json"
+                        defs_path = TOOL_DEFINITIONS_FILE
                         if defs_path.exists():
                             with open(defs_path, "r") as f:
                                 defs = json.load(f)
@@ -213,17 +293,8 @@ class JarvisOrchestrator:
 
     async def start(self):
         print("DEBUG: Starting Jarvis Orchestrator...", flush=True)
-        # Connect to ChromaDB for TOOLS (Librarian) - keeping this local for now or could move to Pinecone too.
-        # User request was specifically for "memory" (episodic/semantic) separation.
-        # Tools are global capabilities usually.
-        try:
-            chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            self.tool_collection = chroma_client.get_collection("tools")
-            print("Connected to ChromaDB 'tools' collection.")
-        except Exception as e:
-            print(f"Warning: Could not connect to ChromaDB for tools: {e}")
-            self.tool_collection = None
-
+        # ChromaDB client is now initialized in __init__
+        
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         server_params = StdioServerParameters(
@@ -282,44 +353,83 @@ After creating a tool, it will be auto-loaded and available immediately.
         if relevant_episodes:
              context_msg = f"\n[Historical Context (May be outdated) in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
         
-        payload_messages = [{"role": "system", "content": system_prompt}] + current_history
-        payload_messages.append({"role": "user", "content": user_input + context_msg})
+        # STATE REMINDER: Force priority of Semantic Memory over Chat History
+        # We re-fetch facts to ensure we have the absolute latest state
+        active_facts = self.semantic_memory.get_all_facts(mode=current_mode, user_id=user_id)
+        fact_strings = [f['fact'] for f in active_facts]
+        
+        state_reminder = f"""
+\n[SYSTEM STATE REMINDER]
+The following are the ONLY active facts. Ignore any conflicting information in the chat history above.
+Active Memories:
+{chr(10).join("- " + f for f in fact_strings) if fact_strings else "(No active memories)"}
+"""
 
-        # Save USER message to DB immediately
+        payload_messages = [{"role": "system", "content": system_prompt}] + current_history
+        # Append reminder to the User's input so it is the last thing the model sees
+        payload_messages.append({"role": "user", "content": user_input + context_msg + state_reminder})
+
+        # Save USER message to DB immediately (Without the hidden prompts)
         self.chat_service.add_message(chat_id, user_id, "user", user_input)
 
         # Tool Definitions
-        current_tool_definitions = self.helper_tools.copy() + self.dynamic_tool_definitions.copy()
+        # Start with core helper tools (create_tool, save_fact, etc.)
+        current_tool_definitions = self.helper_tools.copy()
 
         # Dynamic Retrieval from ChromaDB
+        # We NO LONGER append all self.dynamic_tool_definitions
         if self.tool_collection is not None:
-            results = self.tool_collection.query(
-                query_texts=[user_input],
-                n_results=3 
-            )
-            for meta in results['metadatas'][0]:
-                tool_def = json.loads(meta['json'])
-                current_tool_definitions.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool_def["name"],
-                        "description": tool_def["description"],
-                        "parameters": tool_def["inputSchema"]
-                    }
-                })
+            print(f"DEBUG: Retrieving tools for query: '{user_input}'")
+            try:
+                results = self.tool_collection.query(
+                    query_texts=[user_input],
+                    n_results=5 # Retrieve top 5 relevant tools
+                )
+                
+                if results['ids'] and results['ids'][0]:
+                    print(f"DEBUG: Retrieved tools: {results['ids'][0]}")
+                    for i, json_str in enumerate(results['metadatas'][0]):
+                        try:
+                            tool_def = json.loads(json_str['json'])
+                            # Ensure we don't duplicate if it's somehow already in helpers (unlikely)
+                            if not any(t['function']['name'] == tool_def['name'] for t in current_tool_definitions):
+                                current_tool_definitions.append({
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_def["name"],
+                                        "description": tool_def["description"],
+                                        "parameters": tool_def["inputSchema"]
+                                    }
+                                })
+                        except Exception as e:
+                            print(f"Error parsing tool metadata: {e}")
+            except Exception as e:
+                print(f"Error querying tools: {e}")
+                
         else:
-            mcp_tools_list = await self.session.list_tools()
-            current_tool_definitions.extend([
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.inputSchema
-                    }
-                } 
-                for tool in mcp_tools_list.tools
-            ])
+            # Fallback if DB is down: load everything to be safe, or just helpers?
+            # User accepted "create them" if missing, so maybe just helpers is risky.
+            # But "fallback" implies something went wrong. Let's dump everything so it still works.
+            print("Warning: Tool DB unavailable, falling back to ALL tools.")
+            current_tool_definitions.extend(self.dynamic_tool_definitions)
+
+        # Add MCP tools (if any)
+        if self.session:
+            try:
+                mcp_tools_list = await self.session.list_tools()
+                current_tool_definitions.extend([
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.inputSchema
+                        }
+                    } 
+                    for tool in mcp_tools_list.tools
+                ])
+            except Exception as e:
+                print(f"Error listing MCP tools: {e}")
 
         try:
             response = completion(
