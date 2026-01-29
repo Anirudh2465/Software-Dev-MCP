@@ -113,6 +113,9 @@ class CreateChatRequest(BaseModel):
 class ModeRequest(BaseModel):
     mode: str
 
+class PersonaRequest(BaseModel):
+    persona: str
+
 @app.post("/chat")
 async def chat(request: ChatRequest, current_user: Annotated[dict, Depends(get_current_user)]):
     if not orchestrator:
@@ -186,6 +189,14 @@ async def set_mode(request: ModeRequest, current_user: Annotated[dict, Depends(g
     # For this task, I will just proceed with the requested DB changes.
     result = orchestrator.prompt_manager.set_mode(request.mode)
     return {"status": result, "mode": orchestrator.prompt_manager.mode}
+
+@app.post("/persona")
+async def set_persona(request: PersonaRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.prompt_manager.set_persona(request.persona)
+    return {"status": result, "persona": orchestrator.prompt_manager.persona}
 
 @app.get("/modes")
 async def get_modes(current_user: Annotated[dict, Depends(get_current_user)]):

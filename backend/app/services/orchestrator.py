@@ -12,6 +12,7 @@ from pathlib import Path
 from .memory_manager import EpisodicMemory, SemanticMemory
 from .tool_creator import ToolCreator
 from .chat_service import ChatService
+from ..prompts import get_persona_prompt
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ CHROMA_PORT = 8000
 class PromptManager:
     def __init__(self, semantic_memory):
         self.mode = "Work" # Default mode
+        self.persona = "Generalist" # Default persona
         self.semantic_memory = semantic_memory
     
     def set_mode(self, mode):
@@ -31,6 +33,13 @@ class PromptManager:
             self.mode = mode
             return f"Mode switched to: {mode}"
         return f"Invalid mode. Available: Work, Personal"
+
+    def set_persona(self, persona):
+        from ..prompts import PERSONAS
+        if persona in PERSONAS:
+            self.persona = persona
+            return f"Persona switched to: {persona}"
+        return f"Invalid persona. Available: {list(PERSONAS.keys())}"
 
     def get_system_prompt(self, user_id="default"):
         relevant_facts = []
@@ -40,8 +49,7 @@ class PromptManager:
         relevant_facts = list(set([f['fact'] for f in relevant_facts])) # Extract fact strings
 
         prompt = f"""
-[PERSONALITY]
-You are Jarvis, an intelligent system designed to be helpful, precise, and context-aware.
+{get_persona_prompt(self.persona)}
 
 [CURRENT_MODE]
 Current Mode: {self.mode}
@@ -126,6 +134,7 @@ class JarvisOrchestrator:
                     }
                 }
             },
+
              {
                 "type": "function",
                 "function": {
@@ -137,6 +146,20 @@ class JarvisOrchestrator:
                             "mode": {"type": "string"}
                         },
                         "required": ["mode"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "switch_persona",
+                    "description": "Switch the agent's persona (role).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "persona": {"type": "string", "enum": ["Generalist", "Coder", "Architect", "Sentinel"]}
+                        },
+                        "required": ["persona"]
                     }
                 }
             }
@@ -347,6 +370,10 @@ After creating a tool, it will be auto-loaded and available immediately.
                     if self.prompt_manager.mode == mode_del:
                         self.prompt_manager.set_mode("Work") # Fallback
                         result_content += ". Switched to 'Work'."
+
+                elif function_name == "switch_persona":
+                    print(f"Executing INTERNAL tool: {function_name}")
+                    result_content = self.prompt_manager.set_persona(function_args["persona"])
                         
                 elif function_name == "create_tool":
                     print(f"Executing CREATION tool: {function_name}")
