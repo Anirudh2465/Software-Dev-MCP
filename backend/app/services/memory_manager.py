@@ -233,6 +233,42 @@ class SemanticMemory:
              print(f"Error deleting fact {fact_id}: {e}")
              return None
 
+    def search_facts(self, query, mode="Work", user_id="default"):
+        if self.collection is None:
+            return []
+        try:
+            # Case-insensitive regex search
+            cursor = self.collection.find({
+                "mode": mode, 
+                "user_id": user_id,
+                "fact": {"$regex": query, "$options": "i"}
+            })
+            facts = []
+            for doc in cursor:
+                facts.append({
+                    "id": str(doc["_id"]),
+                    "fact": doc["fact"],
+                    "timestamp": doc.get("timestamp", "")
+                })
+            return facts
+        except Exception as e:
+             print(f"Error searching facts: {e}")
+             return []
+
+    def update_fact(self, fact_id, new_content):
+        if self.collection is None:
+             return False
+        try:
+            from bson.objectid import ObjectId
+            result = self.collection.update_one(
+                {"_id": ObjectId(fact_id)},
+                {"$set": {"fact": new_content, "timestamp": datetime.datetime.now().isoformat()}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+             print(f"Error updating fact {fact_id}: {e}")
+             return False
+
     # Helper for EpisodicMemory is not in this class, checking indentation...
     # Wait, I need to add delete_episodes_containing to EpisodicMemory class above.
 
@@ -288,3 +324,53 @@ class ModeManager:
          return {"status": "error", "message": "Mode not found."}
 
 
+class ToneManager:
+    def __init__(self):
+        self.client = None
+        self.collection = None
+        try:
+            self.client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            self.db = self.client["jarvis_db"]
+            self.collection = self.db["tones"]
+            # Seed default tones if empty
+            if self.collection.count_documents({}) == 0:
+                self.collection.insert_many([
+                    {"name": "Professional", "description": "Maintain a formal, objective, and polite tone. Use complete sentences and precise terminology. Avoid slang or overly casual expressions."},
+                    {"name": "Casual", "description": "Be friendly, relaxed, and conversational. You can use contractions and simpler language. Act like a helpful colleague."},
+                    {"name": "Concise", "description": "Be extremely brief and to the point. Provide only the necessary information. Avoid fillers, pleasantries, or verbose explanations."},
+                    {"name": "Pirate", "description": "Talk like a pirate! Arrr!"} 
+                ])
+                print("Seeded default tones: Professional, Casual, Concise, Pirate")
+        except Exception as e:
+            print(f"Error connecting to MongoDB (ToneManager): {e}")
+
+    def get_tone(self, tone_name):
+        if self.collection is None: return None
+        return self.collection.find_one({"name": tone_name}, {"_id": 0})
+
+    def get_all_tones(self):
+        if self.collection is None: return []
+        return list(self.collection.find({}, {"_id": 0}))
+
+    def create_tone(self, name, description):
+        if self.collection is None: return {"status": "error", "message": "DB not connected"}
+        
+        if self.collection.find_one({"name": name}):
+            return {"status": "error", "message": f"Tone '{name}' already exists."}
+        
+        self.collection.insert_one({
+            "name": name,
+            "description": description
+        })
+        return {"status": "success", "message": f"Tone '{name}' created."}
+
+    def delete_tone(self, name):
+         if self.collection is None: return {"status": "error", "message": "DB not connected"}
+         
+         if name in ["Professional", "Casual", "Concise"]:
+             return {"status": "error", "message": f"Cannot delete default '{name}' tone."}
+             
+         result = self.collection.delete_one({"name": name})
+         if result.deleted_count > 0:
+             return {"status": "success", "message": f"Tone '{name}' deleted."}
+         return {"status": "error", "message": "Tone not found."}

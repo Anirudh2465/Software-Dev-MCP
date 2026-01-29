@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Cpu, User as UserIcon, Plus, Trash2, Sparkles, LogOut, Brain, Settings } from 'lucide-react';
+import { Send, Cpu, User as UserIcon, Plus, Trash2, Sparkles, LogOut, Brain, Settings, Palette, X } from 'lucide-react';
 import { Navbar } from '../../components/Navbar';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,6 +29,13 @@ export default function ChatPage() {
     const [showPersonaMenu, setShowPersonaMenu] = useState(false);
     const [modes, setModes] = useState<any[]>([]);
 
+    // --- Tone State ---
+    const [tones, setTones] = useState<any[]>([]);
+    const [currentTone, setCurrentTone] = useState("Professional");
+    const [showToneMenu, setShowToneMenu] = useState(false);
+    const [showCreateToneModal, setShowCreateToneModal] = useState(false);
+    const [newTone, setNewTone] = useState({ name: "", description: "" });
+
     // --- Auth & Init ---
     useEffect(() => {
         if (!authLoading && !user) router.push('/login');
@@ -39,6 +46,7 @@ export default function ChatPage() {
             const token = localStorage.getItem("token");
             if (!token) return router.push("/login");
             fetchModes();
+            fetchTones();
             fetchChats(activeTab);
         }
     }, [activeTab, user, router]);
@@ -56,6 +64,17 @@ export default function ChatPage() {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setModes(res.data.modes || []);
+        } catch (err) { console.error(err); }
+    };
+
+    const fetchTones = async () => {
+        try {
+            const token = localStorage.getItem("token");
+            const res = await axios.get(`${API_URL}/tones`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setTones(res.data.tones || []);
+            if (res.data.current_tone) setCurrentTone(res.data.current_tone);
         } catch (err) { console.error(err); }
     };
 
@@ -115,6 +134,41 @@ export default function ChatPage() {
         } catch (err) { console.error(err); }
     };
 
+    const handleSetTone = async (toneName: string) => {
+        try {
+            const token = localStorage.getItem("token");
+            await axios.post(`${API_URL}/tone`, { tone: toneName }, { headers: { Authorization: `Bearer ${token}` } });
+            setCurrentTone(toneName);
+            setShowToneMenu(false);
+        } catch (err) { console.error(err); }
+    };
+
+    const handleCreateTone = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            const token = localStorage.getItem("token");
+            await axios.post(`${API_URL}/tones`, newTone, { headers: { Authorization: `Bearer ${token}` } });
+            setNewTone({ name: "", description: "" });
+            setShowCreateToneModal(false);
+            fetchTones(); // Refresh list
+        } catch (err) {
+            alert("Error creating tone. Name might be duplicate.");
+            console.error(err);
+        }
+    };
+
+    const handleDeleteTone = async (e: React.MouseEvent, toneName: string) => {
+        e.stopPropagation();
+        if (!confirm(`Delete tone '${toneName}'?`)) return;
+        try {
+            const token = localStorage.getItem("token");
+            await axios.delete(`${API_URL}/tones/${toneName}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            fetchTones();
+        } catch (err) { console.error(err); }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || !currentChatId) return;
@@ -132,6 +186,8 @@ export default function ChatPage() {
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             setMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+            // Refresh chats to update title if it changed (Chat Naming)
+            fetchChats(activeTab);
         } catch (err) {
             setMessages(prev => [...prev, { role: 'assistant', content: "Error communicating with server." }]);
         } finally {
@@ -144,6 +200,54 @@ export default function ChatPage() {
     return (
         <div className="flex h-screen w-full bg-background text-foreground overflow-hidden font-sans selection:bg-accent selection:text-white pt-[73px]">
             <Navbar />
+
+            {/* --- Create Tone Modal --- */}
+            <AnimatePresence>
+                {showCreateToneModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                            className="bg-surface border border-white/10 p-6 rounded-2xl w-full max-w-md shadow-2xl relative"
+                        >
+                            <button onClick={() => setShowCreateToneModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                <Palette className="text-accent" /> Create New Tone
+                            </h2>
+                            <form onSubmit={handleCreateTone} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Name</label>
+                                    <input
+                                        className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white focus:border-accent focus:outline-none"
+                                        placeholder="e.g., Sarcastic, Pirate, Yoda"
+                                        value={newTone.name}
+                                        onChange={e => setNewTone({ ...newTone, name: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Description (Instruction)</label>
+                                    <textarea
+                                        className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white focus:border-accent focus:outline-none h-24 resize-none"
+                                        placeholder="Describe how the AI should speak..."
+                                        value={newTone.description}
+                                        onChange={e => setNewTone({ ...newTone, description: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <button type="button" onClick={() => setShowCreateToneModal(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
+                                    <button type="submit" className="px-4 py-2 text-sm bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors font-medium">Create Tone</button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* --- Sidebar --- */}
             <motion.aside
@@ -161,44 +265,83 @@ export default function ChatPage() {
                             <h1 className="text-xl font-bold tracking-tight">Jarvis</h1>
                         </div>
 
-                        <div className="relative">
-                            <button
-                                onClick={() => setShowPersonaMenu(!showPersonaMenu)}
-                                className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
-                                title="Persona & Settings"
-                            >
-                                <Settings size={18} />
-                            </button>
+                        <div className="flex items-center gap-1">
+                            {/* Tone Selector */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowToneMenu(!showToneMenu)}
+                                    className={`p-2 rounded-lg transition-colors ${showToneMenu ? 'text-white bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                    title={`Tone: ${currentTone}`}
+                                >
+                                    <Palette size={18} />
+                                </button>
+                                {showToneMenu && (
+                                    <div className="absolute top-full right-0 mt-2 w-56 bg-surface border border-white/10 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-xl">
+                                        <div className="flex items-center justify-between px-2 mb-2">
+                                            <h3 className="text-[10px] uppercase font-bold text-gray-500">Tone</h3>
+                                            <button onClick={() => { setShowCreateToneModal(true); setShowToneMenu(false); }} className="text-[10px] bg-white/10 hover:bg-accent text-white px-2 py-0.5 rounded transition-colors">+ NEW</button>
+                                        </div>
+                                        <div className="max-h-[300px] overflow-y-auto scrollbar-thin">
+                                            {tones.map(t => (
+                                                <div key={t.name} className="flex items-center group/item">
+                                                    <button
+                                                        onClick={() => handleSetTone(t.name)}
+                                                        className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors ${currentTone === t.name ? 'bg-accent text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+                                                    >
+                                                        {t.name}
+                                                    </button>
+                                                    {["Professional", "Casual", "Concise"].includes(t.name) ? null : (
+                                                        <button onClick={(e) => handleDeleteTone(e, t.name)} className="p-1.5 opacity-0 group-hover/item:opacity-100 text-gray-500 hover:text-red-400 transition-all">
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
 
-                            {showPersonaMenu && (
-                                <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-white/10 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-xl">
-                                    <h3 className="text-[10px] uppercase font-bold text-gray-500 mb-2 px-2">System Persona</h3>
-                                    {["Generalist", "Coder", "Architect", "Sentinel"].map(p => (
+                            {/* Persona Selector */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowPersonaMenu(!showPersonaMenu)}
+                                    className={`p-2 rounded-lg transition-colors ${showPersonaMenu ? 'text-white bg-white/5' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                    title="Persona & Settings"
+                                >
+                                    <Settings size={18} />
+                                </button>
+
+                                {showPersonaMenu && (
+                                    <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-white/10 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-xl">
+                                        <h3 className="text-[10px] uppercase font-bold text-gray-500 mb-2 px-2">System Persona</h3>
+                                        {["Generalist", "Coder", "Architect", "Sentinel"].map(p => (
+                                            <button
+                                                key={p}
+                                                onClick={async () => {
+                                                    setPersona(p);
+                                                    setShowPersonaMenu(false);
+                                                    try {
+                                                        const token = localStorage.getItem("token");
+                                                        await axios.post(`${API_URL}/persona`, { persona: p }, { headers: { Authorization: `Bearer ${token}` } });
+                                                    } catch (e) { console.error(e); }
+                                                }}
+                                                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${persona === p ? 'bg-accent text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+                                            >
+                                                {p}
+                                            </button>
+                                        ))}
+                                        <div className="h-px bg-white/10 my-2" />
                                         <button
-                                            key={p}
-                                            onClick={async () => {
-                                                setPersona(p);
-                                                setShowPersonaMenu(false);
-                                                try {
-                                                    const token = localStorage.getItem("token");
-                                                    await axios.post(`${API_URL}/persona`, { persona: p }, { headers: { Authorization: `Bearer ${token}` } });
-                                                } catch (e) { console.error(e); }
-                                            }}
-                                            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${persona === p ? 'bg-accent text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+                                            onClick={() => router.push('/memory')}
+                                            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-pink-400 hover:bg-pink-500/10 transition-colors"
                                         >
-                                            {p}
+                                            <Brain size={14} />
+                                            <span>Memory Vault</span>
                                         </button>
-                                    ))}
-                                    <div className="h-px bg-white/10 my-2" />
-                                    <button
-                                        onClick={() => router.push('/memory')}
-                                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-pink-400 hover:bg-pink-500/10 transition-colors"
-                                    >
-                                        <Brain size={14} />
-                                        <span>Memory Vault</span>
-                                    </button>
-                                </div>
-                            )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
 

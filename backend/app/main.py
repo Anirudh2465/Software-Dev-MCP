@@ -223,6 +223,55 @@ async def delete_mode(mode_name: str, current_user: Annotated[dict, Depends(get_
         
     return result
 
+# --- Tone Routes ---
+
+class ToneRequest(BaseModel):
+    tone: str
+
+class CreateToneRequest(BaseModel):
+    name: str
+    description: str
+
+@app.get("/tones")
+async def get_tones(current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    tones = orchestrator.tone_manager.get_all_tones()
+    return {"tones": tones, "current_tone": orchestrator.prompt_manager.tone}
+
+@app.post("/tones")
+async def create_tone(request: CreateToneRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.tone_manager.create_tone(request.name, request.description)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.delete("/tones/{tone_name}")
+async def delete_tone(tone_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.tone_manager.delete_tone(tone_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    # Reset to default if deleted tone was active
+    if orchestrator.prompt_manager.tone == tone_name:
+        orchestrator.prompt_manager.set_tone("Professional")
+        
+    return result
+
+@app.post("/tone")
+async def set_tone(request: ToneRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.prompt_manager.set_tone(request.tone)
+    return {"status": result, "tone": orchestrator.prompt_manager.tone}
+
 @app.get("/memory/{mode_name}")
 async def get_memory(mode_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
     if not orchestrator:

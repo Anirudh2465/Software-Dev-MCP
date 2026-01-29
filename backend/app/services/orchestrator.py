@@ -9,11 +9,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from litellm import completion
 from pathlib import Path
-from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager
+from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager, ToneManager
 from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
-from ..prompts import get_persona_prompt
+from ..prompts import get_persona_prompt, generate_tone_prompt_template, DEFAULT_TONES
 
 # ... [imports]
 
@@ -28,11 +28,13 @@ CHROMA_HOST = "localhost"
 CHROMA_PORT = 8000
 
 class PromptManager:
-    def __init__(self, semantic_memory, mode_manager):
+    def __init__(self, semantic_memory, mode_manager, tone_manager):
         self.mode = "Work" # Default mode
         self.persona = "Generalist" # Default persona
+        self.tone = "Professional" # Default tone
         self.semantic_memory = semantic_memory
         self.mode_manager = mode_manager
+        self.tone_manager = tone_manager
     
     def set_mode(self, mode):
         # Check against DB modes
@@ -49,6 +51,19 @@ class PromptManager:
             return f"Persona switched to: {persona}"
         return f"Invalid persona. Available: {list(PERSONAS.keys())}"
 
+    def set_tone(self, tone):
+        # Check against DB
+        tone_doc = self.tone_manager.get_tone(tone)
+        if tone_doc:
+            self.tone = tone
+            return f"Tone switched to: {tone}"
+        # Check defaults if DB fails?
+        if tone in DEFAULT_TONES:
+             self.tone = tone
+             return f"Tone switched to: {tone} (Default)"
+             
+        return f"Invalid tone. Available: {', '.join([t['name'] for t in self.tone_manager.get_all_tones()])}"
+
     def get_system_prompt(self, user_id="default"):
         relevant_facts = []
         # Strict isolation: Only get facts for the current mode
@@ -56,8 +71,17 @@ class PromptManager:
         
         relevant_facts = list(set([f['fact'] for f in relevant_facts])) # Extract fact strings
 
+        # Get Tone Prompt
+        tone_doc = self.tone_manager.get_tone(self.tone)
+        if tone_doc:
+             tone_prompt = generate_tone_prompt_template(tone_doc["name"], tone_doc["description"])
+        else:
+             tone_prompt = DEFAULT_TONES.get(self.tone, DEFAULT_TONES["Professional"])
+
         prompt = f"""
 {get_persona_prompt(self.persona)}
+
+{tone_prompt}
 
 [CURRENT_MODE]
 Current Mode: {self.mode}
@@ -72,6 +96,7 @@ Current Mode: {self.mode}
 3. If a complex request requires multiple steps, outline them in your thinking block.
 4. "Who am I?" questions should count on the memories provided above.
 5. [RELEVANT_MEMORIES] is the ONLY source of truth for active facts. If a fact is not listed there, do not consider it a current memory, even if it appears in [Historical Context].
+6. Use 'save_fact' to remember important user details. Use 'edit_memory' if the user explicitly corrects a past fact.
 
 [SCRATCHPAD]
 Waiting for input...
@@ -83,8 +108,9 @@ class JarvisOrchestrator:
         self.episodic_memory = EpisodicMemory()
         self.semantic_memory = SemanticMemory()
         self.mode_manager = ModeManager()
+        self.tone_manager = ToneManager()
         self.chat_service = ChatService()
-        self.prompt_manager = PromptManager(self.semantic_memory, self.mode_manager)
+        self.prompt_manager = PromptManager(self.semantic_memory, self.mode_manager, self.tone_manager)
         self.tool_creator = ToolCreator()
         self.document_manager = DocumentManager()
         self.tool_collection = None
@@ -190,6 +216,21 @@ class JarvisOrchestrator:
                             "mode": {"type": "string", "description": "The mode to save this fact to (defaults to current)."}
                         },
                         "required": ["fact"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "edit_memory",
+                    "description": "Update an existing memory/fact about the user.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "old_content": {"type": "string", "description": "The old fact content to search for (partial match allowed)."},
+                            "new_content": {"type": "string", "description": "The new content to replace it with."}
+                        },
+                        "required": ["old_content", "new_content"]
                     }
                 }
             },
@@ -427,9 +468,20 @@ After creating a tool, it will be auto-loaded and available immediately.
             # Convert DB messages to LLM format
             for msg in chat_doc.get("messages", []):
                 current_history.append({"role": msg["role"], "content": msg["content"]})
+            
+            # --- FEATURE: Dynamic Chat Naming & Proactive Tool Loading ---
+            # If this is the FIRST message in the chat
+            if len(chat_doc.get("messages", [])) == 0:
+                # 1. Generate Title
+                await self._generate_chat_title(user_input, chat_id, user_id)
+                # 2. Suggest Tools (Wait for it so we can use it in this turn)
+                suggested_tools = await self._suggest_tools(user_input, chat_id, user_id)
+                # Update local doc reference for this run
+                chat_doc["suggested_tools"] = suggested_tools
         else:
             # Fallback (should have been created via API)
             print(f"Warning: Chat {chat_id} not found locally, creating ephemeral context")
+            # Create it implicitly if missing? For now just log.
 
         # Add episodic context (Partitioned by MODE and USER)
         relevant_episodes = self.episodic_memory.search_episodes(user_input, mode=current_mode, n=2, user_id=user_id)
@@ -512,6 +564,19 @@ Active Memories:
                             print(f"Error parsing tool metadata: {e}")
             except Exception as e:
                 print(f"Error querying tools: {e}")
+        
+        # --- FEATURE: Proactive Tool Loading (Suggested Tools) ---
+        if chat_doc and "suggested_tools" in chat_doc:
+            print(f"DEBUG: Loading suggested tools: {chat_doc['suggested_tools']}")
+            for tool_name in chat_doc["suggested_tools"]:
+                # Check dynamic tools
+                if tool_name in self.dynamic_tools:
+                     # Find definition
+                     t_def = next((alert for alert in self.dynamic_tool_definitions if alert["function"]["name"] == tool_name), None)
+                     if t_def and not any(t['function']['name'] == tool_name for t in current_tool_definitions):
+                         current_tool_definitions.append(t_def)
+                # Check real MCP tools (handled below in MCP block? No, MCP tools not in definition list yet)
+                # We handle MCP below.
                 
         else:
             print("Warning: Tool DB unavailable, falling back to ALL tools.")
@@ -537,7 +602,7 @@ Active Memories:
 
         # --- MULTI-TURN EXECUTION LOOP ---
         final_text = ""
-        MAX_TURNS = 10  # Increased to allow for complex multi-step tasks (e.g. create tool -> gen data -> process)
+        MAX_TURNS = 20  # Increased to allow for complex multi-step tasks (e.g. create tool -> gen data -> process)
         turn_count = 0
 
         while turn_count < MAX_TURNS:
@@ -603,7 +668,24 @@ Active Memories:
                         print(f"Executing INTERNAL tool: {function_name}")
                         target_mode = function_args.get("mode", current_mode)
                         result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode, user_id=user_id)
+
+                    elif function_name == "edit_memory":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        old_content = function_args.get("old_content")
+                        new_content = function_args.get("new_content")
                         
+                        # Search for candidates
+                        candidates = self.semantic_memory.search_facts(old_content, mode=current_mode, user_id=user_id)
+                        
+                        if not candidates:
+                             result_content = f"No memory found matching '{old_content}' in {current_mode} mode."
+                        elif len(candidates) == 1:
+                             success = self.semantic_memory.update_fact(candidates[0]['id'], new_content)
+                             result_content = f"Memory updated: '{candidates[0]['fact']}' -> '{new_content}'" if success else "Error updating memory."
+                        else:
+                             # Multiple matches
+                             result_content = f"Multiple memories found matching '{old_content}'. Please be more specific. Matches: " + ", ".join([f"'{c['fact']}'" for c in candidates])
+
                     elif function_name == "set_mode":
                         print(f"Executing INTERNAL tool: {function_name}")
                         result_content = self.prompt_manager.set_mode(function_args["mode"])
@@ -721,3 +803,59 @@ Active Memories:
         self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
 
         return final_text
+
+    async def _generate_chat_title(self, first_message, chat_id, user_id):
+        print("DEBUG: Generating chat title...")
+        try:
+            response = completion(
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Generate a concise title (3-5 words) for this chat based on the user's first message. Return ONLY the title, no quotes."},
+                    {"role": "user", "content": first_message}
+                ]
+            )
+            title = response.choices[0].message.content.strip().replace('"', '')
+            self.chat_service.update_chat_title(chat_id, user_id, title)
+            print(f"DEBUG: Set chat title to '{title}'")
+        except Exception as e:
+            print(f"Error generating chat title: {e}")
+
+    async def _suggest_tools(self, first_message, chat_id, user_id):
+        print("DEBUG: Analyzing for proactive tools...")
+        try:
+             # Get all available tool names
+            all_tool_names = list(self.dynamic_tools.keys()) + list(self.real_tool_names)
+            
+            prompt = f"""
+You are an intelligent orchestrator. The user has just started a chat with this request:
+"{first_message}"
+
+Available Tools: {', '.join(all_tool_names)}
+
+Which of these tools are HIGHLY LIKELY to be needed for this request?
+Return a JSON array of tool names. Example: ["read_pdf", "calculator"].
+If no specific tools are needed, return [].
+Do NOT explain. Return ONLY JSON.
+"""
+            response = completion(
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = response.choices[0].message.content
+            # Cleanup code blocks if any
+            if "```" in content:
+                content = content.split("```")[1].replace("json", "").strip()
+            
+            tools = json.loads(content)
+            if isinstance(tools, list):
+                 self.chat_service.update_chat_field(chat_id, user_id, "suggested_tools", tools)
+                 print(f"DEBUG: Suggested tools: {tools}")
+                 return tools
+            return []
+        except Exception as e:
+            print(f"Error suggesting tools: {e}")
+            return []

@@ -131,5 +131,19 @@
                 }
             }
         }
+    },
+    {
+        "name": "calculate_factorial",
+        "description": "Calculates the factorial of a non-negative integer provided as input string and returns the result as a string.",
+        "filename": "calculate_factorial.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
     }
 ]

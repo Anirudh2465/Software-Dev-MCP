@@ -34,5 +34,25 @@ Prioritize stability and robust error handling.
 """
 }
 
+# Default Tones (Fallback if DB is empty or error)
+DEFAULT_TONES = {
+    "Professional": """[TONE: Professional]
+Maintain a formal, objective, and polite tone. Use complete sentences and precise terminology. Avoid slang or overly casual expressions.""",
+    
+    "Casual": """[TONE: Casual]
+Be friendly, relaxed, and conversational. You can use contractions and simpler language. Act like a helpful colleague.""",
+    
+    "Concise": """[TONE: Concise]
+Be extremely brief and to the point. Provide only the necessary information. Avoid fillers, pleasantries, or verbose explanations."""
+}
+
 def get_persona_prompt(persona_name="Generalist"):
     return PERSONAS.get(persona_name, PERSONAS["Generalist"])
+
+def generate_tone_prompt_template(name, description):
+    """
+    Generates a system prompt section for a custom tone.
+    """
+    return f"""[TONE: {name}]
+{description}
+"""
