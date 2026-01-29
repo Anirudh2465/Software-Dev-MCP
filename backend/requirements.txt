@@ -1,0 +1,14 @@
+chromadb>=1.4.1
+fastmcp>=2.14.3
+litellm>=1.80.16
+mcp>=1.25.0
+pymongo>=4.16.0
+python-dotenv>=1.2.1
+passlib[argon2]
+python-jose[cryptography]
+python-multipart
+argon2-cffi
+pypdf
+python-docx
+Pillow
+pytesseract

@@ -1,106 +1,125 @@
 # Jarvis: The Digital Synapse
 
-Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution and a "Librarian" system for context-aware tool retrieval.
+Jarvis is an intelligent agentic system designed to bridge the gap between Large Language Models (LLMs) and local machine capabilities using the **Model Context Protocol (MCP)**. It features a "Digital Synapse" for direct tool execution, a "Librarian" system for context-aware tool retrieval, an advanced **Agentic Memory** system, and a **Self-Evolution** engine for creating new tools.
 
 ## 🧠 Core Architecture
 
-1.  **Orchestrator (`orchestrator.py`)**: The central brain. It maintains the chat loop, manages conversation history, and connects the LLM (Gemini) to local tools.
-2.  **MCP Server (`filesystem_server.py`)**: A standardized server built with `FastMCP` that exposes local filesystem operations (`read`, `write`, `list`) to the Orchestrator.
-3.  **The Librarian (RAG)**: Uses **ChromaDB** to semantically search and retrieve only the most relevant tools for a user's query, preventing context window overload.
-4.  **Memory Vault**: Uses **MongoDB** (upcoming) and **ChromaDB** for persistent data storage.
+1.  **Orchestrator (Backend)**: built with **FastAPI**, serving as the central brain. It maintains the chat loop, manages conversation history (Episodic Memory), and connects the LLM (Local LM Studio) to local tools.
+2.  **Frontend**: A modern Web UI built with **Next.js** and **Tailwind CSS**.
+3.  **Task Queue**: **Celery** + **Redis** for background tool execution and heavy lifting.
+4.  **Memory Vault**:
+    *   **MongoDB (Semantic Memory)**: Stores permanent user facts.
+    *   **ChromaDB (Episodic Memory)**: Stores conversation history for context retrieval.
+    *   **Redis**: Caching and task brokerage.
+
+---
 
 ## 🛠️ Prerequisites
 
--   **Docker Desktop**: For running MongoDB and ChromaDB services.
--   **Python 3.12+**
--   **uv**: An extremely fast Python package and project manager.
+Before you begin, ensure you have the following installed:
 
-## 🚀 Installation & Setup
+1.  **Docker Desktop** (Required for databases) - [Download](https://www.docker.com/products/docker-desktop/)
+2.  **Python 3.12+** (Backend runtime)
+3.  **uv** (Recommended Python package manager) - [Installation Guide](https://docs.astral.sh/uv/getting-started/installation/)
+    *   *Alternative*: `pip` (standard).
+4.  **Node.js 18+** & **npm** (Frontend runtime) - [Download](https://nodejs.org/)
 
-### 1. Install `uv`
-If you haven't installed `uv` yet, use one of the following commands:
+---
 
-**Windows (PowerShell):**
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+## 🚀 Execution Instructions (From Scratch)
+
+Follow these steps EXACTLY to run the system.
+
+### 1. Start Infrastructure (Docker)
+Launch the database services (MongoDB, ChromaDB, Redis).
+
+```bash
+# In the project root directory
+docker compose up -d
+```
+*Wait for containers to be healthy.*
+
+### 2. Backend Setup & Run
+
+It is highly recommended to use `uv` for fast dependency management.
+
+**A. Configure Environment**
+Create a `.env` file in the **project root** directory (if not exists) and add your keys:
+```ini
+# Local LM Studio Configuration
+LLM_API_BASE=http://localhost:1234/v1
+LLM_MODEL=openai/local-model
+LLM_API_KEY=lm-studio
+
+# Database Configuration
+REDIS_URL=redis://localhost:6379/0
+MONGODB_URL=mongodb://localhost:27017/jarvis
+CHROMA_DB_PATH=./data/chroma
 ```
 
-**Linux / macOS:**
+**B. Install Dependencies**
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 2. Project Setup
-Navigate to the project directory:
-```bash
-cd jarvis
-```
-
-### 3. Environment Setup
-We use `uv` to manage the virtual environment and dependencies. This ensures a reproducible environment across all platforms.
-
-**Initialize and Sync (Windows & Linux):**
-This command creates the virtual environment (`.venv`) and installs all dependencies lock-file.
-```bash
+# In the project root directory
 uv sync
 ```
 
-**Activating the Virtual Environment (Optional):**
-While `uv run <script>` automatically uses the environment, you can activate it manually if you prefer.
-
-*   **Windows:**
-    ```powershell
-    .venv\Scripts\activate
-    ```
-*   **Linux / macOS:**
-    ```bash
-    source .venv/bin/activate
-    ```
-
-### 4. Configure Secrets
-Create a `.env` file in the root directory and add your Google Gemini API key:
-```ini
-GEMINI_API_KEY=your_api_key_here
-```
-
-### 5. Start Infrastructure
-Launch the database services (MongoDB & ChromaDB) using Docker:
+**C. Start Backend Server**
 ```bash
-docker compose up -d
+# In the project root directory
+uv run uvicorn backend.app.main:app --reload --port 8001
 ```
-*   **MongoDB**: `localhost:27017`
-*   **ChromaDB**: `localhost:8000`
+*   Backend API will be running at: `http://localhost:8001`
+*   API Docs: `http://localhost:8001/docs`
 
-## 📂 Code Files & Usage Guide
+### 3. Start Background Worker (Celery)
 
-Here is a breakdown of the core files and how to run them.
+The worker handles background tasks like tool validation and execution. Open a **new terminal**.
 
-| File | Description | Command to Run |
-| :--- | :--- | :--- |
-| **`verification_script.py`** | Verifies connectivity to MongoDB and ChromaDB. Run this first to ensure your infrastructure is ready. | `uv run verification_script.py` |
-| **`tool_indexer.py`** | **(Phase 2)** Reads `dummy_tools.json` and indexes them into ChromaDB. Run this **once** to populate the "Librarian". | `uv run tool_indexer.py` |
-| **`dummy_tools.json`** | A simulated dataset of 100+ tools (Calendar, Spotify, etc.) used for testing dynamic retrieval. | *Data file, not executable* |
-| **`filesystem_server.py`** | The MCP server exposing `list_directory`, `read_file`, and `write_file`. | *Started automatically by Orchestrator* |
-| **`orchestrator.py`** | **The Main App**. Connects to Gemini, queries The Librarian (ChromaDB), and executes tools via MCP. | `uv run orchestrator.py` |
+```bash
+# In the project root directory
+uv run celery -A backend.app.celery_app worker --loglevel=info --pool=solo
+```
+*Note for Windows users: `--pool=solo` is often required for Celery to work correctly.*
 
-## 🎮 How to Run "Jarvis"
+### 4. Frontend Setup & Run
 
-1.  **Start Databases**:
-    ```bash
-    docker compose up -d
-    ```
+Open a **new terminal**.
 
-2.  **Populate Knowledge Base (The Librarian)**:
-    ```bash
-    uv run tool_indexer.py
-    ```
-    *You should see "Successfully indexed..." output.*
+```bash
+# Navigate to frontend directory
+cd frontend
 
-3.  **Run the Agent**:
-    ```bash
-    uv run orchestrator.py
-    ```
+# Install dependencies
+npm install
 
-4.  **Interact**:
-    *   **Test local tools**: *"What's in my 'Notes' folder?"*
-    *   **Test RAG Retrieval**: *"Add a meeting with John tomorrow."* (Use this to verify it finds calendar tools and ignores music tools).
+# Start development server
+npm run dev
+```
+*   Frontend will be accessible at: `http://localhost:3000`
+
+---
+
+## ✅ Verification
+
+1.  Open `http://localhost:3000` in your browser.
+2.  You should see the Chat Interface.
+3.  Type "Hello" to check if the Backend is connected.
+4.  If the backend is running, you will get a response from Jarvis.
+
+---
+
+## 📂 Troubleshooting
+
+*   **Database Connection Failed**: Ensure Docker containers are running (`docker ps`).
+*   **"Orchestrator not ready" error**: The backend server takes a moment to initialize the agent. Wait a few seconds after starting the backend.
+*   **Celery Worker warnings**: If on Windows, ensure you used the `--pool=solo` flag.
+*   **Frontend connection refused**: Ensure the backend is running on port `8000` and the frontend `.env` (if any) points to it.
+
+---
+
+## 🤝 Project Structure
+
+*   `backend/`: FastAPI application and Python logic.
+*   `frontend/`: Next.js web application.
+*   `data/`: Persistent storage for databases (gitignored).
+*   `docker-compose.yml`: Database orchestration.
