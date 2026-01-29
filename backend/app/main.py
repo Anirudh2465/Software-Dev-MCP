@@ -202,7 +202,7 @@ async def set_persona(request: PersonaRequest, current_user: Annotated[dict, Dep
 async def get_modes(current_user: Annotated[dict, Depends(get_current_user)]):
     if not orchestrator:
          raise HTTPException(status_code=503, detail="Orchestrator not ready")
-    modes = orchestrator.semantic_memory.get_modes()
+    modes = orchestrator.mode_manager.get_all_modes()
     return {"modes": modes, "current_mode": orchestrator.prompt_manager.mode}
 
 @app.delete("/modes/{mode_name}")
@@ -210,16 +210,18 @@ async def delete_mode(mode_name: str, current_user: Annotated[dict, Depends(get_
     if not orchestrator:
          raise HTTPException(status_code=503, detail="Orchestrator not ready")
     
-    if mode_name == "Work":
-        return {"status": "Cannot delete default 'Work' mode."}
-        
+    result = orchestrator.mode_manager.delete_mode(mode_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    # Also delete memory
     orchestrator.semantic_memory.delete_mode(mode_name, user_id=current_user["username"])
     orchestrator.episodic_memory.delete_mode_memory(mode_name, user_id=current_user["username"])
     
     if orchestrator.prompt_manager.mode == mode_name:
         orchestrator.prompt_manager.set_mode("Work")
         
-    return {"status": f"Deleted mode {mode_name}"}
+    return result
 
 @app.get("/memory/{mode_name}")
 async def get_memory(mode_name: str, current_user: Annotated[dict, Depends(get_current_user)]):

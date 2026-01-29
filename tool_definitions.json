@@ -14,23 +14,6 @@
         }
     },
     {
-        "name": "fibonacci",
-        "description": "Calculate the nth Fibonacci number.",
-        "filename": "fibonacci.py",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "n_str": {
-                    "type": "string",
-                    "description": "The index n (0-based) as a string."
-                }
-            },
-            "required": [
-                "n_str"
-            ]
-        }
-    },
-    {
         "name": "multiply_numbers",
         "description": "Multiply two numbers",
         "filename": "multiply_numbers.py",
@@ -69,6 +52,76 @@
         "name": "factorial_calc",
         "description": "Calculates the factorial of a non-negative integer provided as input string and returns the result as a string.",
         "filename": "factorial_calc.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "matrix_multiply",
+        "description": "Takes three 3x3 matrices (as lists of lists) and returns their product matrix as a list of lists.",
+        "filename": "matrix_multiply.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "generate_random_matrix",
+        "description": "Generate a 3x3 matrix with random integers between 0 and 9",
+        "filename": "generate_random_matrix.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "matrix_multiplier",
+        "description": "Takes three 3x3 matrices (as lists of lists) and returns their product matrix as a list of lists.",
+        "filename": "matrix_multiplier.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "generate_random_matrix",
+        "description": "Generate a 3x3 matrix with random integers between 0 and 9",
+        "filename": "generate_random_matrix.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "fibonacci_calc",
+        "description": "Calculate the nth Fibonacci number (0-indexed). Returns result as string.",
+        "filename": "fibonacci_calc.py",
         "inputSchema": {
             "type": "object",
             "properties": {

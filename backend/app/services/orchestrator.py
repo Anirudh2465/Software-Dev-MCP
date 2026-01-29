@@ -9,7 +9,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from litellm import completion
 from pathlib import Path
-from .memory_manager import EpisodicMemory, SemanticMemory
+from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager
 from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
@@ -28,16 +28,19 @@ CHROMA_HOST = "localhost"
 CHROMA_PORT = 8000
 
 class PromptManager:
-    def __init__(self, semantic_memory):
+    def __init__(self, semantic_memory, mode_manager):
         self.mode = "Work" # Default mode
         self.persona = "Generalist" # Default persona
         self.semantic_memory = semantic_memory
+        self.mode_manager = mode_manager
     
     def set_mode(self, mode):
-        if mode in ["Work", "Personal"]:
+        # Check against DB modes
+        mode_doc = self.mode_manager.get_mode(mode)
+        if mode_doc:
             self.mode = mode
             return f"Mode switched to: {mode}"
-        return f"Invalid mode. Available: Work, Personal"
+        return f"Invalid mode. Available: {', '.join([m['name'] for m in self.mode_manager.get_all_modes()])}"
 
     def set_persona(self, persona):
         from ..prompts import PERSONAS
@@ -79,8 +82,9 @@ class JarvisOrchestrator:
     def __init__(self):
         self.episodic_memory = EpisodicMemory()
         self.semantic_memory = SemanticMemory()
+        self.mode_manager = ModeManager()
         self.chat_service = ChatService()
-        self.prompt_manager = PromptManager(self.semantic_memory)
+        self.prompt_manager = PromptManager(self.semantic_memory, self.mode_manager)
         self.tool_creator = ToolCreator()
         self.document_manager = DocumentManager()
         self.tool_collection = None
@@ -302,6 +306,26 @@ class JarvisOrchestrator:
                         "required": ["file_path"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_new_mode",
+                    "description": "Create a new mode with specific allowed tools.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name of the new mode (e.g. 'Coding', 'Research')"},
+                            "description": {"type": "string", "description": "Description of what this mode is for."},
+                            "allowed_tools": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of tool names allowed in this mode. Use ['*'] for all tools."
+                            }
+                        },
+                        "required": ["name", "description", "allowed_tools"]
+                    }
+                }
             }
         ]
 
@@ -443,8 +467,22 @@ Active Memories:
         # Start with core helper tools (create_tool, save_fact, etc.)
         current_tool_definitions = self.helper_tools.copy()
 
+        # --- MODE RESTRICTION LOGIC ---
+        mode_doc = self.mode_manager.get_mode(current_mode)
+        allowed_tools = mode_doc.get("allowed_tools", ["*"]) if mode_doc else ["*"]
+        
+        # If not wild card, filter base helpers
+        if "*" not in allowed_tools:
+            # We ALWAYS allow 'set_mode', 'create_new_mode' to avoid locking out, 
+            # and maybe 'save_fact'? Let's trust the configured list but force criticals.
+            critical_tools = ["set_mode", "create_new_mode", "create_tool"] 
+            # Only keep tools that are in allowed list OR critical
+            current_tool_definitions = [
+                t for t in current_tool_definitions 
+                if t["function"]["name"] in allowed_tools or t["function"]["name"] in critical_tools
+            ]
+
         # Dynamic Retrieval from ChromaDB
-        # We NO LONGER append all self.dynamic_tool_definitions
         if self.tool_collection is not None:
             print(f"DEBUG: Retrieving tools for query: '{user_input}'")
             try:
@@ -460,23 +498,22 @@ Active Memories:
                             tool_def = json.loads(json_str['json'])
                             # Ensure we don't duplicate if it's somehow already in helpers (unlikely)
                             if not any(t['function']['name'] == tool_def['name'] for t in current_tool_definitions):
-                                current_tool_definitions.append({
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_def["name"],
-                                        "description": tool_def["description"],
-                                        "parameters": tool_def["inputSchema"]
-                                    }
-                                })
+                                # FILTER DYNAMIC TOOLS TOO
+                                if "*" in allowed_tools or tool_def["name"] in allowed_tools:
+                                    current_tool_definitions.append({
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_def["name"],
+                                            "description": tool_def["description"],
+                                            "parameters": tool_def["inputSchema"]
+                                        }
+                                    })
                         except Exception as e:
                             print(f"Error parsing tool metadata: {e}")
             except Exception as e:
                 print(f"Error querying tools: {e}")
                 
         else:
-            # Fallback if DB is down: load everything to be safe, or just helpers?
-            # User accepted "create them" if missing, so maybe just helpers is risky.
-            # But "fallback" implies something went wrong. Let's dump everything so it still works.
             print("Warning: Tool DB unavailable, falling back to ALL tools.")
             current_tool_definitions.extend(self.dynamic_tool_definitions)
 
@@ -490,150 +527,197 @@ Active Memories:
                         "function": {
                             "name": tool.name,
                             "description": tool.description,
-                            "parameters": tool.inputSchema
                         }
                     } 
                     for tool in mcp_tools_list.tools
+                    if "*" in allowed_tools or tool.name in allowed_tools 
                 ])
             except Exception as e:
                 print(f"Error listing MCP tools: {e}")
 
-        try:
-            response = completion(
-                model=os.getenv("LLM_MODEL", "openai/local-model"),
-                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
-                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
-                messages=payload_messages,
-                tools=current_tool_definitions,
-            )
-            response_message = response.choices[0].message
-        except Exception as e:
-            return f"Error calling LLM: {e}"
+        # --- MULTI-TURN EXECUTION LOOP ---
+        final_text = ""
+        MAX_TURNS = 10  # Increased to allow for complex multi-step tasks (e.g. create tool -> gen data -> process)
+        turn_count = 0
 
-        # Note: We don't append to self.messages anymore
-        
-        if response_message.tool_calls:
-            print(f"\n[Tool Call Detected]: {response_message.tool_calls[0].function.name}")
+        while turn_count < MAX_TURNS:
+            turn_count += 1
+            print(f"DEBUG: Turn {turn_count}/{MAX_TURNS}")
             
-            # Temporary list to hold this turn's tool interaction
-            # We need to construct a new payload because 'payload_messages' already has the user input
-            # We need to append the ASSISTANT's tool_call message, then the TOOL results.
+            # ... [Existing loop body] ...
+            # I need to match the indentation and structure of the loop body content I'm *not* changing,
+            # but replace_file_content requires exact match or complete replacement.
+            # To avoid large replace blocks, I will do this in two steps or simply replace the loop set up 
+            # and then the post-loop handling.
             
-            payload_messages.append(response_message) # Add assistant's tool call
+            # Actually, standard replace_file_content works on contiguous blocks.
+            # I will target the variable init and the WHILE line first.
 
-            for tool_call in response_message.tool_calls:
-                function_name = tool_call.function.name
-                function_args = eval(tool_call.function.arguments) 
-                
-                result_content = ""
-                
-                if function_name == "save_fact":
-                    print(f"Executing INTERNAL tool: {function_name}")
-                    # Default to current mode if not specified
-                    target_mode = function_args.get("mode", current_mode)
-                    result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode, user_id=user_id)
-                    
-                elif function_name == "set_mode":
-                    print(f"Executing INTERNAL tool: {function_name}")
-                    result_content = self.prompt_manager.set_mode(function_args["mode"])
-                    
-                elif function_name == "delete_mode":
-                    print(f"Executing INTERNAL tool: {function_name}")
-                    mode_del = function_args["mode"]
-                    # Delete from Mongo and Pinecone
-                    sem_del = self.semantic_memory.delete_mode(mode_del, user_id=user_id)
-                    epi_del = self.episodic_memory.delete_mode_memory(mode_del, user_id=user_id)
-                    result_content = f"Deleted mode '{mode_del}' for user {user_id}. Semantic: {sem_del}, Episodic: {epi_del}"
-                    if self.prompt_manager.mode == mode_del:
-                        self.prompt_manager.set_mode("Work") # Fallback
-                        result_content += ". Switched to 'Work'."
+            turn_count += 1
+            print(f"DEBUG: Turn {turn_count}/{MAX_TURNS}")
 
-                elif function_name == "switch_persona":
-                    print(f"Executing INTERNAL tool: {function_name}")
-                    result_content = self.prompt_manager.set_persona(function_args["persona"])
+            try:
+                # Force tools to be available in every turn
+                response = completion(
+                    model=os.getenv("LLM_MODEL", "openai/local-model"),
+                    api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                    api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                    messages=payload_messages,
+                    tools=current_tool_definitions if current_tool_definitions else None,
+                )
+                response_message = response.choices[0].message
+            except Exception as e:
+                return f"Error calling LLM: {e}"
+
+            # Append the Assistant's response (content or tool call) to history
+            # Explicitly convert to dict to avoid Pydantic serialization warnings/issues
+            msg_dict = {"role": response_message.role, "content": response_message.content}
+            if response_message.tool_calls:
+                 msg_dict["tool_calls"] = [
+                     {
+                         "id": tc.id, 
+                         "type": tc.type, 
+                         "function": {
+                             "name": tc.function.name, 
+                             "arguments": tc.function.arguments
+                         }
+                     }
+                     for tc in response_message.tool_calls
+                 ]
+            payload_messages.append(msg_dict)
+
+            if response_message.tool_calls:
+                print(f"\n[Tool Call Detected]: {response_message.tool_calls[0].function.name}")
                 
-                elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file", "read_file"]:
-                    print(f"Executing INTERNAL tool: {function_name}")
-                    # All file tools map to the unified ingest_file method
-                    result_content = self.document_manager.ingest_file(function_args["file_path"])
-                        
-                elif function_name == "create_tool":
-                    print(f"Executing CREATION tool: {function_name}")
-                    result = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
-                    
-                    if isinstance(result, dict) and result.get("status") == "success":
-                        result_content = result["message"]
-                        tool_name_created = result["tool_name"]
-                        file_path = result["file_path"]
-                        
-                        # Dynamic Load
-                        if self._load_dynamic_tool(tool_name_created, file_path):
-                             result_content += f"\nTool '{tool_name_created}' hot-loaded and ready."
-                             # Make it available immediately for the follow-up response
-                             if self.dynamic_tool_definitions:
-                                 current_tool_definitions.append(self.dynamic_tool_definitions[-1])
-                    else:
-                        result_content = str(result)
-                        
-                elif function_name in self.dynamic_tools:
-                    print(f"Executing DYNAMIC tool: {function_name}")
+                for tool_call in response_message.tool_calls:
+                    function_name = tool_call.function.name
                     try:
-                        func = self.dynamic_tools[function_name]
-                        # Assume func takes kwargs matching the args
-                        result_content = str(func(**function_args))
-                    except Exception as e:
-                        result_content = f"Error executing tool {function_name}: {e}"
+                        function_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError:
+                        print(f"Error parsing arguments for {function_name}: {tool_call.function.arguments}")
+                        function_args = {} 
+                    
+                    result_content = ""
+                    
+                    if function_name == "save_fact":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        target_mode = function_args.get("mode", current_mode)
+                        result_content = self.semantic_memory.save_fact(function_args["fact"], mode=target_mode, user_id=user_id)
+                        
+                    elif function_name == "set_mode":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        result_content = self.prompt_manager.set_mode(function_args["mode"])
+                        # Determine if we need to update system prompt for next turn?
+                        # For simplicity, we keep current prompt but the tool result says mode changed.
+                        
+                    elif function_name == "delete_mode":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        mode_del = function_args["mode"]
+                        sem_del = self.semantic_memory.delete_mode(mode_del, user_id=user_id)
+                        epi_del = self.episodic_memory.delete_mode_memory(mode_del, user_id=user_id)
+                        result_content = f"Deleted mode '{mode_del}' for user {user_id}. Semantic: {sem_del}, Episodic: {epi_del}"
+                        if self.prompt_manager.mode == mode_del:
+                            self.prompt_manager.set_mode("Work")
+                            result_content += ". Switched to 'Work'."
 
-                elif function_name in self.real_tool_names:
-                    print(f"Executing REAL tool: {function_name}")
-                    result = await self.session.call_tool(function_name, function_args)
-                    result_content = str(result.content)
-                else:
-                    print(f"Simulating MOCK tool: {function_name}")
-                    result_content = f"Mock success: {function_name} executed with {function_args}"
+                    elif function_name == "switch_persona":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        result_content = self.prompt_manager.set_persona(function_args["persona"])
+                    
+                    elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file", "read_file"]:
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        result_content = self.document_manager.ingest_file(function_args["file_path"])
+                            
+                    elif function_name == "create_tool":
+                        print(f"Executing CREATION tool: {function_name}")
+                        result = self.tool_creator.create_tool(function_args["tool_name"], function_args["description"])
+                        
+                        if isinstance(result, dict) and result.get("status") == "success":
+                            result_content = result["message"]
+                            tool_name_created = result["tool_name"]
+                            file_path = result["file_path"]
+                            
+                            # Dynamic Load
+                            if self._load_dynamic_tool(tool_name_created, file_path):
+                                 result_content += f"\nTool '{tool_name_created}' hot-loaded and ready."
+                                 # UPDATE current_tool_definitions for the next turn
+                                 if self.dynamic_tool_definitions:
+                                     # Append the most recently added definition
+                                     # We need to find the specific one we just added to be safe
+                                     new_def = next((d for d in self.dynamic_tool_definitions if d['function']['name'] == tool_name_created), None)
+                                     if new_def:
+                                         current_tool_definitions.append(new_def)
+                        else:
+                            result_content = str(result)
+                            
+                    elif function_name in self.dynamic_tools:
+                        print(f"Executing DYNAMIC tool: {function_name}")
+                        try:
+                            func = self.dynamic_tools[function_name]
+                            result_content = str(func(**function_args))
+                        except Exception as e:
+                            result_content = f"Error executing tool {function_name}: {e}"
+
+                    elif function_name in self.real_tool_names:
+                        print(f"Executing REAL tool: {function_name}")
+                        result = await self.session.call_tool(function_name, function_args)
+                        result_content = str(result.content)
+                        
+                    elif function_name == "create_new_mode":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        res = self.mode_manager.create_mode(
+                            function_args["name"], 
+                            function_args.get("description", ""), 
+                            function_args.get("allowed_tools", ["*"])
+                        )
+                        result_content = str(res)
+
+                    else:
+                        print(f"Simulating MOCK tool: {function_name}")
+                        result_content = f"Mock success: {function_name} executed with {function_args}"
+
+                    # Add Tool Result to History
+                    payload_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result_content
+                    })
                 
-                payload_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result_content
-                })
+                # Loop continues to next turn to generate response based on tool results
             
-            # Final Follow-up Response
-            # Note: If mode changed mid-tools, prompts should reflect new mode?
-            # Ideally re-fetch prompt.
-            payload_messages[0] = {"role": "system", "content": self.prompt_manager.get_system_prompt(user_id=user_id)}
-            
-            second_response = completion(
-                model=os.getenv("LLM_MODEL", "openai/local-model"),
-                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
-                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
-                messages=payload_messages,
-            )
-            final_message = second_response.choices[0].message
-            final_text = final_message.content
-            print(f"Jarvis: {final_text}")
-            
-            # Save Episodic Memory (Partitioned)
-            self.episodic_memory.add_episode(
-                content=f"User: {user_input}\nJarvis: {final_text}",
-                mode=self.prompt_manager.mode,
-                user_id=user_id
-            )
-            
-            # Save Assistant Response to DB
-            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
-            
-            return final_text
-        
-        else:
-            final_text = response_message.content
-            print(f"Jarvis: {final_text}")
-            self.episodic_memory.add_episode(
-                content=f"User: {user_input}\nJarvis: {final_text}",
-                mode=self.prompt_manager.mode,
-                user_id=user_id
-            )
-            # Save Assistant Response to DB
-            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+            else:
+                # No tool calls -> Final Answer
+                final_text = response_message.content
+                print(f"Jarvis: {final_text}")
+                break
 
-            return final_text
+        # Post-Loop Fallback: If loop finished but no final text (e.g. max turns reached on a tool call)
+        if not final_text:
+            print("DEBUG: Max turns reached or loop exited without final text. Generating summary...")
+            try:
+                # Force a final response based on the accumulated history
+                response = completion(
+                    model=os.getenv("LLM_MODEL", "openai/local-model"),
+                    api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                    api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                    messages=payload_messages,
+                    # No tools this time, just want a text response
+                )
+                final_text = response.choices[0].message.content
+                print(f"Jarvis (Fallback): {final_text}")
+            except Exception as e:
+                final_text = f"Error generating final response: {e}"
+
+        # Post-Loop Logging and Saving
+        
+        # Save Episodic Memory
+        self.episodic_memory.add_episode(
+            content=f"User: {user_input}\nJarvis: {final_text}",
+            mode=self.prompt_manager.mode,
+            user_id=user_id
+        )
+        
+        # Save Assistant Response to DB
+        self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+
+        return final_text

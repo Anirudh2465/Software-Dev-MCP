@@ -20,21 +20,32 @@ export const Navbar = () => {
                 Jarvis
             </Link>
 
-            {user && (
-                <div className="flex items-center gap-6">
-                    <Link href="/" className={`text-sm font-medium transition-colors ${pathname === '/' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
-                        Chat
-                    </Link>
-                    <Link href="/memory" className={`text-sm font-medium transition-colors ${pathname === '/memory' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
-                        Memory
-                    </Link>
-                    <div className="h-4 w-px bg-white/10 mx-2" />
-                    <span className="text-sm text-gray-400">Hello, <span className="text-white font-semibold">{user.username}</span></span>
-                    <Button onClick={logout} className="!px-4 !py-2 !text-sm !bg-none !bg-white/10 hover:!bg-white/20">
-                        Logout
-                    </Button>
-                </div>
-            )}
+            <div className="flex items-center gap-6">
+                {user ? (
+                    <>
+                        <Link href="/chat" className={`text-sm font-medium transition-colors ${pathname === '/chat' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
+                            Chat
+                        </Link>
+                        <Link href="/memory" className={`text-sm font-medium transition-colors ${pathname === '/memory' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
+                            Memory
+                        </Link>
+                        <div className="h-4 w-px bg-white/10 mx-2" />
+                        <span className="text-sm text-gray-400">Hello, <span className="text-white font-semibold">{user.username}</span></span>
+                        <Button onClick={logout} className="!px-4 !py-2 !text-sm !bg-none !bg-white/10 hover:!bg-white/20">
+                            Logout
+                        </Button>
+                    </>
+                ) : (
+                    <>
+                        <Link href="/login" className="text-sm font-medium transition-colors hover:text-white">
+                            Login
+                        </Link>
+                        <Link href="/signup" className="text-sm font-medium transition-colors hover:text-white">
+                            Sign Up
+                        </Link>
+                    </>
+                )}
+            </div>
         </nav>
     );
 };

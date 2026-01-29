@@ -236,3 +236,55 @@ class SemanticMemory:
     # Helper for EpisodicMemory is not in this class, checking indentation...
     # Wait, I need to add delete_episodes_containing to EpisodicMemory class above.
 
+
+class ModeManager:
+    def __init__(self):
+        self.client = None
+        self.collection = None
+        try:
+            self.client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            self.db = self.client["jarvis_db"]
+            self.collection = self.db["modes"]
+            # Seed default modes if empty
+            if self.collection.count_documents({}) == 0:
+                self.collection.insert_many([
+                    {"name": "Work", "description": "Professional mode for work tasks", "allowed_tools": ["*"]},
+                    {"name": "Personal", "description": "Casual mode for personal tasks", "allowed_tools": ["save_fact", "chat", "switch_persona", "read_text_file", "search_web"]}
+                ])
+                print("Seeded default modes: Work, Personal")
+        except Exception as e:
+            print(f"Error connecting to MongoDB (ModeManager): {e}")
+
+    def get_mode(self, mode_name):
+        if self.collection is None: return None
+        return self.collection.find_one({"name": mode_name}, {"_id": 0})
+
+    def get_all_modes(self):
+        if self.collection is None: return []
+        return list(self.collection.find({}, {"_id": 0}))
+
+    def create_mode(self, name, description, allowed_tools):
+        if self.collection is None: return {"status": "error", "message": "DB not connected"}
+        
+        if self.collection.find_one({"name": name}):
+            return {"status": "error", "message": f"Mode '{name}' already exists."}
+        
+        self.collection.insert_one({
+            "name": name,
+            "description": description,
+            "allowed_tools": allowed_tools
+        })
+        return {"status": "success", "message": f"Mode '{name}' created."}
+
+    def delete_mode(self, name):
+         if self.collection is None: return {"status": "error", "message": "DB not connected"}
+         
+         if name == "Work":
+             return {"status": "error", "message": "Cannot delete default 'Work' mode."}
+             
+         result = self.collection.delete_one({"name": name})
+         if result.deleted_count > 0:
+             return {"status": "success", "message": f"Mode '{name}' deleted."}
+         return {"status": "error", "message": "Mode not found."}
+
+
