@@ -14,6 +14,7 @@ from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
 from ..prompts import get_persona_prompt
+import re
 
 # ... [imports]
 
@@ -171,6 +172,16 @@ class JarvisOrchestrator:
                     
         except Exception as e:
             print(f"Error reading tool definitions: {e}", flush=True)
+
+    def _sanitize_response(self, text):
+        """
+        Removes raw model tokens or tags (e.g. <|start|>, <|message|>) that might leak into the output.
+        """
+        if not text:
+            return ""
+        # Remove <|...|> patterns
+        cleaned = re.sub(r"<\|.*?\|>", "", text)
+        return cleaned.strip()
 
     def _define_internal_tools(self):
         return [
@@ -610,7 +621,7 @@ Active Memories:
                 messages=payload_messages,
             )
             final_message = second_response.choices[0].message
-            final_text = final_message.content
+            final_text = self._sanitize_response(final_message.content)
             print(f"Jarvis: {final_text}")
             
             # Save Episodic Memory (Partitioned)
@@ -626,7 +637,7 @@ Active Memories:
             return final_text
         
         else:
-            final_text = response_message.content
+            final_text = self._sanitize_response(response_message.content)
             print(f"Jarvis: {final_text}")
             self.episodic_memory.add_episode(
                 content=f"User: {user_input}\nJarvis: {final_text}",

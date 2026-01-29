@@ -20,4 +20,6 @@ def check_health():
         return str(e)
 
 if __name__ == "__main__":
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
     check_health()

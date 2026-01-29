@@ -49,21 +49,34 @@ class SentinelService:
 
     def generate_report(self):
         """
-        Generates a human-readable health report.
+        Generates a human-readable health report in Markdown.
         """
         sys_metrics = self.check_system_metrics()
         svc_status = self.check_services()
         
+        # Format System Metrics
+        cpu = sys_metrics.get('cpu_percent')
+        ram = sys_metrics.get('memory_percent')
+        free_ram = sys_metrics.get('memory_available_mb')
+        disk = sys_metrics.get('disk_percent')
+        
         report = [
-            "--- Sentinel System Health Report ---",
-            f"CPU Usage: {sys_metrics.get('cpu_percent')}%",
-            f"RAM Usage: {sys_metrics.get('memory_percent')}% ({sys_metrics.get('memory_available_mb')} MB free)",
-            f"Disk Usage: {sys_metrics.get('disk_percent')}%",
-            "--- Service Status ---"
+            "### 🛡️ Sentinel System Health Report",
+            "",
+            "| Metric | Value | Status |",
+            "| :--- | :--- | :--- |",
+            f"| **CPU Usage** | `{cpu}%` | {'✅' if isinstance(cpu, (int, float)) and cpu < 80 else '⚠️'} |",
+            f"| **RAM Usage** | `{ram}%` | {'✅' if isinstance(ram, (int, float)) and ram < 90 else '⚠️'} |",
+            f"| **Free RAM** | `{free_ram} MB` | - |",
+            f"| **Disk Usage** | `{disk}%` | {'✅' if isinstance(disk, (int, float)) and disk < 90 else '⚠️'} |",
+            "",
+            "### 🔌 Service Status",
+            ""
         ]
         
         for name, state in svc_status.items():
-            report.append(f"{name.upper()}: {state}")
+            icon = "✅" if "OK" in state else "🔴" if "DOWN" in state else "⚠️"
+            report.append(f"- {icon} **{name.upper()}**: `{state}`")
             
         return "\n".join(report)
 
