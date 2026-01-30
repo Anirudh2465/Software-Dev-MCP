@@ -198,6 +198,21 @@ async def set_persona(request: PersonaRequest, current_user: Annotated[dict, Dep
     result = orchestrator.prompt_manager.set_persona(request.persona)
     return {"status": result, "persona": orchestrator.prompt_manager.persona}
 
+class CreateModeRequest(BaseModel):
+    name: str
+    description: str
+    allowed_tools: List[str] = ["*"]
+
+@app.post("/modes")
+async def create_mode(request: CreateModeRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.mode_manager.create_mode(request.name, request.description, request.allowed_tools)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
 @app.get("/modes")
 async def get_modes(current_user: Annotated[dict, Depends(get_current_user)]):
     if not orchestrator:

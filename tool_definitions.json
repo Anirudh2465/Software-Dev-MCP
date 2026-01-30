@@ -145,5 +145,33 @@
                 }
             }
         }
+    },
+    {
+        "name": "extract_pdf_text",
+        "description": "Read a PDF file and return its text content for summarization.",
+        "filename": "extract_pdf_text.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
+    },
+    {
+        "name": "extract_pdf_text",
+        "description": "Read a PDF file and return its full textual content as a string.",
+        "filename": "extract_pdf_text.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
     }
 ]

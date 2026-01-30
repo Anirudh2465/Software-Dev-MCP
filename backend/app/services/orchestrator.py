@@ -466,11 +466,19 @@ After creating a tool, it will be auto-loaded and available immediately.
         current_history = []
         if chat_doc:
             # Convert DB messages to LLM format
-            for msg in chat_doc.get("messages", []):
+            raw_msgs = chat_doc.get("messages", [])
+            
+            # --- CONTEXT MANAGEMENT: LIMIT HISTORY ---
+            # Keep only last 10 messages to avoid overflow
+            MAX_HISTORY = 2
+            if len(raw_msgs) > MAX_HISTORY:
+                raw_msgs = raw_msgs[-MAX_HISTORY:]
+            
+            for msg in raw_msgs:
                 current_history.append({"role": msg["role"], "content": msg["content"]})
             
             # --- FEATURE: Dynamic Chat Naming & Proactive Tool Loading ---
-            # If this is the FIRST message in the chat
+            # If this is the FIRST message in the chat (check original length)
             if len(chat_doc.get("messages", [])) == 0:
                 # 1. Generate Title
                 await self._generate_chat_title(user_input, chat_id, user_id)
@@ -490,11 +498,21 @@ After creating a tool, it will be auto-loaded and available immediately.
         relevant_docs = self.document_manager.search_documents(user_input)
         
         context_msg = ""
+        
+        # --- CONTEXT MANAGEMENT: TRUNCATE RAG ---
+        MAX_CONTEXT_CHARS = 2000
+        
         if relevant_episodes:
-             context_msg = f"\n[Historical Context (May be outdated) in {current_mode} mode]:\n" + "\n".join(relevant_episodes)
+             episodes_str = "\n".join(relevant_episodes)
+             if len(episodes_str) > MAX_CONTEXT_CHARS:
+                 episodes_str = episodes_str[:MAX_CONTEXT_CHARS] + "...[TRUNCATED]"
+             context_msg = f"\n[Historical Context (May be outdated) in {current_mode} mode]:\n" + episodes_str
              
         if relevant_docs:
-             context_msg += f"\n[Document Context]:\n" + "\n".join(relevant_docs)
+             docs_str = "\n".join(relevant_docs)
+             if len(docs_str) > MAX_CONTEXT_CHARS:
+                 docs_str = docs_str[:MAX_CONTEXT_CHARS] + "...[TRUNCATED]"
+             context_msg += f"\n[Document Context]:\n" + docs_str
         
         # STATE REMINDER: Force priority of Semantic Memory over Chat History
         # We re-fetch facts to ensure we have the absolute latest state

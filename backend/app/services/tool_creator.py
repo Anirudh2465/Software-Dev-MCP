@@ -24,10 +24,48 @@ class ToolCreator:
              with open(TOOL_DEFINITIONS_FILE, "w") as f:
                  json.dump([], f)
 
+    def _get_project_dependencies(self):
+        """
+        Reads pyproject.toml to get the list of dependencies.
+        """
+        try:
+            pyproject_path = BASE_DIR / "pyproject.toml"
+            if not pyproject_path.exists():
+                return []
+            
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Simple manual parsing to avoid new dependencies
+            deps = []
+            capture = False
+            for line in content.splitlines():
+                line = line.strip()
+                if line.startswith("dependencies = ["):
+                    capture = True
+                    continue
+                if capture and line.startswith("]"):
+                    capture = False
+                    break
+                if capture:
+                    # Remove quotes and comma
+                    dep = line.strip('"').strip("'").strip(",")
+                    # Remove version constraints (e.g. >=1.0)
+                    dep_name = dep.split(">")[0].split("<")[0].split("=")[0].strip()
+                    if dep_name:
+                        deps.append(dep_name)
+            return deps
+        except Exception as e:
+            print(f"Warning: Could not read pyproject.toml: {e}")
+            return []
+
     def generate_tool_code(self, tool_name, description, functionality_guidelines):
         """
         Generates Python code for a tool and a corresponding test script using the LLM.
         """
+        available_packages = self._get_project_dependencies()
+        available_packages_str = ", ".join(available_packages) if available_packages else "None (Standard Library Only)"
+
         # Prompt for Tool Code
         tool_prompt = f"""
         You are an expert Python developer. Create a single-file Python script for a tool named '{tool_name}'.
@@ -38,11 +76,18 @@ class ToolCreator:
         [Guidelines]
         {functionality_guidelines}
         
+        [Available Environment Packages]
+        The following packages are already part of the project environment:
+        {available_packages_str}
+        
         [Requirements]
         1. structure it as a standalone function named '{tool_name}'.
         2. The function should take primitive types as arguments (str, int, float, bool) unless specified otherwise.
         3. Return the result as a string or a JSON-serializable dictionary.
-        4. Include standard library imports ONLY. If external packages are ABSOLUTELY necessary, list them in a comment at the top like: # REQUIREMENTS: package1, package2
+        4. CRITICAL: If external packages are needed (even if listed above), you MUST list them in a comment at the very top of the code in this exact format:
+           # REQUIREMENTS: package1, package2
+           Example: # REQUIREMENTS: requests, beautifulsoup4
+           This is required for the isolated validation step to install them.
         5. DO NOT include any execution block (if __name__ == "__main__") in the tool code itself, just the function definition.
         6. Output ONLY the python code. No markdown formatting.
         """
@@ -124,20 +169,39 @@ class ToolCreator:
             with open(test_script_path, "w", encoding="utf-8") as f:
                 f.write(test_code)
             
+            # PARSE REQUIREMENTS
+            requirements = []
+            for line in tool_code.splitlines():
+                if line.strip().upper().startswith("# REQUIREMENTS:"):
+                    # Extract after colon
+                    reqs = line.strip().split(":", 1)[1]
+                    # Split by comma
+                    requirements = [r.strip() for r in reqs.split(",") if r.strip()]
+                    break
+            
+            print(f"DEBUG: Found requirements: {requirements}")
+            
             print("DEBUG: Running Docker validation...")
             
             # Mount BASE_DIR so docker sees the files in root
             cwd = str(BASE_DIR)
+            
+            # Construct command
+            if requirements:
+                req_str = " ".join(requirements)
+                install_cmd = f"pip install {req_str} && python test_script.py"
+                docker_cmd_args = ["/bin/sh", "-c", install_cmd]
+            else:
+                docker_cmd_args = ["python", "test_script.py"]
             
             cmd = [
                 "docker", "run", "--rm",
                 "-v", f"{cwd}:/app",
                 "-w", "/app",
                 "python:3.9-slim",
-                "python", "test_script.py"
-            ]
+            ] + docker_cmd_args
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60) # Increased timeout for pip install
             
             if "TEST_PASSED" in result.stdout or result.returncode == 0:
                 print("DEBUG: Validation Successful.")

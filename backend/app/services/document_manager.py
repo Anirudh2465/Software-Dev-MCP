@@ -1,6 +1,7 @@
 import os
 import uuid
 import json
+import io
 from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
@@ -110,11 +111,22 @@ class DocumentManager:
                 text = ""
                 for i, page in enumerate(reader.pages):
                     page_text = page.extract_text()
-                    if page_text:
+                    if page_text and page_text.strip():
                         text += page_text + "\n"
-                
+                    else:
+                        # Try OCR on images
+                        try:
+                            if hasattr(page, 'images'):
+                                for image_file in page.images:
+                                    image_data = image_file.data
+                                    img = Image.open(io.BytesIO(image_data))
+                                    ocr_text = pytesseract.image_to_string(img)
+                                    text += ocr_text + "\n"
+                        except Exception as ocr_err:
+                            print(f"Warning: OCR failed for page {i}: {ocr_err}")
+
                 if not text.strip():
-                    return "[WARNING: PDF contains no selectable text. It might be a scanned image. OCR for PDFs is not yet fully supported.]"
+                     return "[WARNING: PDF appears empty or unreadable even after OCR attempt.]"
                 return text
             except Exception as e:
                 print(f"PDF Error: {e}")
