@@ -2,239 +2,209 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Button, Card } from '../../components/ui/PremiumComponents';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trash2, FileText, Activity } from 'lucide-react';
+import { ArrowLeft, Trash2, Database, Brain, Sparkles, Layers, Search } from 'lucide-react';
+import { Navbar } from '../../components/Navbar';
 
 const API_URL = 'http://localhost:8001';
 
 export default function MemoryPage() {
     const { user, isLoading: authLoading } = useAuth();
     const router = useRouter();
-    const [modes, setModes] = useState<string[]>([]);
-    const [selectedMode, setSelectedMode] = useState("Work");
-    const [memories, setMemories] = useState<{ semantic: any[], episodic: any[] }>({ semantic: [], episodic: [] });
-    const [loading, setLoading] = useState(true);
+
+    const [activeMode, setActiveMode] = useState("Work");
+    const [activeTab, setActiveTab] = useState<"semantic" | "episodic">("semantic");
+    const [data, setData] = useState<{ semantic: any[], episodic: any[] }>({ semantic: [], episodic: [] });
+    const [loading, setLoading] = useState(false);
+    const [search, setSearch] = useState("");
+    const [modes, setModes] = useState<any[]>([]);
 
     useEffect(() => {
-        if (!authLoading && !user) {
-            router.push('/login');
-        }
+        if (!authLoading && !user) router.push('/login');
+        if (user) fetchModes();
     }, [user, authLoading, router]);
 
     useEffect(() => {
-        if (user) {
-            fetchModes();
-        }
-    }, [user]);
-
-    useEffect(() => {
-        if (user && selectedMode) {
-            fetchMemories();
-        }
-    }, [user, selectedMode]);
+        if (user) fetchMemory(activeMode);
+    }, [user, activeMode]);
 
     const fetchModes = async () => {
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem("token");
             const res = await axios.get(`${API_URL}/modes`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setModes(res.data.modes);
-            if (res.data.current_mode) setSelectedMode(res.data.current_mode);
-        } catch (err) {
-            console.error("Failed to fetch modes", err);
-        }
+            setModes(res.data.modes || []);
+        } catch (err) { console.error(err); }
     };
 
-    const fetchMemories = async () => {
+    const fetchMemory = async (mode: string) => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
-            const res = await axios.get(`${API_URL}/memory/${selectedMode}`, {
+            const token = localStorage.getItem("token");
+            const res = await axios.get(`${API_URL}/memory/${mode}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setMemories(res.data);
-        } catch (err) {
-            console.error("Failed to fetch memories", err);
-        } finally {
-            setLoading(false);
-        }
+            setData(res.data);
+        } catch (err) { console.error(err); }
+        finally { setLoading(false); }
     };
 
-    const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-
     const deleteFact = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this memory? This will also wipe related conversation history.')) return;
-
-        // Optimistic UI Update
-        setDeletingIds(prev => new Set(prev).add(id));
-        const originalMemories = { ...memories };
-        setMemories(prev => ({
-            ...prev,
-            semantic: prev.semantic.filter(item => item.id !== id)
-        }));
-
+        if (!confirm("Delete this fact? It will also remove related conversation history.")) return;
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem("token");
             await axios.delete(`${API_URL}/memory/semantic/${id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            // Success - background refresh to ensure sync
-            fetchMemories();
-        } catch (err) {
-            console.error("Failed to delete fact", err);
-            alert("Failed to delete memory. Please try again.");
-            // Revert on failure
-            setMemories(originalMemories);
-        } finally {
-            setDeletingIds(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(id);
-                return newSet;
-            });
-        }
+            setData(prev => ({ ...prev, semantic: prev.semantic.filter(i => i._id !== id) }));
+        } catch (err) { console.error(err); }
     };
 
     const deleteEpisode = async (id: string) => {
-        if (!confirm('Delete this conversation snippet?')) return;
-
-        setDeletingIds(prev => new Set(prev).add(id));
-        const originalMemories = { ...memories };
-        setMemories(prev => ({
-            ...prev,
-            episodic: prev.episodic.filter(item => item.id !== id)
-        }));
-
+        if (!confirm("Delete this memory episode?")) return;
         try {
-            const token = localStorage.getItem('token');
-            await axios.delete(`${API_URL}/memory/episodic/${id}?mode=${selectedMode}`, {
+            const token = localStorage.getItem("token");
+            await axios.delete(`${API_URL}/memory/episodic/${id}?mode=${activeMode}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            fetchMemories();
-        } catch (err) {
-            console.error("Failed to delete episode", err);
-            alert("Failed to delete episode.");
-            setMemories(originalMemories);
-        } finally {
-            setDeletingIds(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(id);
-                return newSet;
-            });
-        }
+            setData(prev => ({ ...prev, episodic: prev.episodic.filter(i => i.id !== id) }));
+        } catch (err) { console.error(err); }
     };
 
-    if (authLoading || !user) return null;
+    const filteredData = (activeTab === "semantic" ? data.semantic : data.episodic).filter(item => {
+        const content = activeTab === "semantic" ? item.fact : item.content;
+        return content?.toLowerCase().includes(search.toLowerCase());
+    });
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex flex-col gap-8"
-            >
-                <div className="flex flex-col md:flex-row justify-between items-center bg-white/5 p-6 rounded-2xl backdrop-blur-md border border-white/10">
-                    <div>
-                        <h1 className="text-3xl font-bold text-white">Memory Bank</h1>
-                        <p className="text-gray-400 mt-1">Manage what Jarvis knows about you in {selectedMode} mode</p>
-                    </div>
-                    <div className="flex gap-2 mt-4 md:mt-0 overflow-x-auto pb-2 md:pb-0">
-                        {modes.map(mode => (
-                            <button
-                                key={mode}
-                                onClick={() => setSelectedMode(mode)}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${selectedMode === mode
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                                    : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
-                                    }`}
-                            >
-                                {mode}
-                            </button>
-                        ))}
+        <div className="flex flex-col h-screen w-full bg-background/50 text-foreground overflow-hidden font-sans pt-[73px]">
+            <Navbar />
+
+            {/* Sub-Header */}
+            <header className="h-14 border-b border-border/50 bg-surface/30 backdrop-blur-md flex items-center justify-between px-6 z-10 shrink-0">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-pink-600 flex items-center justify-center shadow-[0_0_15px_rgba(219,39,119,0.5)]">
+                            <Brain className="text-white w-5 h-5" />
+                        </div>
+                        <h1 className="text-xl font-bold tracking-tight">Memory Vault</h1>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Semantic Memory Column */}
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-4">
-                            <FileText className="text-blue-400" />
-                            <h2 className="text-xl font-semibold text-white">Core Facts</h2>
+                <div className="flex items-center gap-2 bg-surface/80 rounded-lg p-1 border border-border overflow-x-auto scrollbar-none">
+                    {modes.map(mode => (
+                        <button
+                            key={mode.name}
+                            onClick={() => setActiveMode(mode.name)}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeMode === mode.name
+                                ? "bg-white/10 text-white shadow-sm"
+                                : "text-gray-400 hover:text-white hover:bg-white/5"
+                                }`}
+                            title={mode.description}
+                        >
+                            {mode.name}
+                        </button>
+                    ))}
+                </div>
+            </header>
+
+            {/* Content */}
+            <main className="flex-1 overflow-hidden flex flex-col p-6 md:p-10 relative">
+                <div className="max-w-6xl w-full mx-auto flex-1 flex flex-col gap-6">
+
+                    {/* Controls */}
+                    <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+                        <div className="flex gap-4">
+                            <TabButton active={activeTab === "semantic"} onClick={() => setActiveTab("semantic")} icon={Database} label="Core Facts" />
+                            <TabButton active={activeTab === "episodic"} onClick={() => setActiveTab("episodic")} icon={Layers} label="Episodic History" />
                         </div>
-                        {loading ? (
-                            <div className="text-center text-gray-500 py-10">Loading facts...</div>
-                        ) : memories.semantic.length === 0 ? (
-                            <div className="text-center text-gray-600 py-10 bg-white/5 rounded-xl border border-white/5 border-dashed">No facts stored</div>
-                        ) : (
-                            <AnimatePresence>
-                                {memories.semantic.map((item: any) => (
-                                    <motion.div
-                                        key={item.id}
-                                        layout
-                                        initial={{ opacity: 0, scale: 0.9 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.9 }}
-                                    >
-                                        <Card className="!p-4 bg-white/5 hover:bg-white/10 transition-colors group relative border-l-4 border-l-blue-500">
-                                            <p className="text-gray-200 pr-8">{item.fact}</p>
-                                            <span className="text-xs text-gray-500 mt-2 block">{new Date(item.timestamp).toLocaleString()}</span>
-                                            <button
-                                                onClick={() => deleteFact(item.id)}
-                                                disabled={deletingIds.has(item.id)}
-                                                className={`absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ${deletingIds.has(item.id) ? 'opacity-100 cursor-not-allowed' : ''}`}
-                                            >
-                                                {deletingIds.has(item.id) ? <Activity className="animate-spin" size={18} /> : <Trash2 size={18} />}
-                                            </button>
-                                        </Card>
-                                    </motion.div>
-                                ))}
-                            </AnimatePresence>
-                        )}
+
+                        <div className="relative w-full md:w-64 group">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 group-focus-within:text-accent transition-colors" />
+                            <input
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search memories..."
+                                className="w-full bg-surface/50 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-accent/50 transition-all"
+                            />
+                        </div>
                     </div>
 
-                    {/* Episodic Memory Column */}
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-4">
-                            <Activity className="text-purple-400" />
-                            <h2 className="text-xl font-semibold text-white">Experiences</h2>
-                        </div>
+                    {/* Grid */}
+                    <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin">
                         {loading ? (
-                            <div className="text-center text-gray-500 py-10">Loading episodes...</div>
-                        ) : memories.episodic.length === 0 ? (
-                            <div className="text-center text-gray-600 py-10 bg-white/5 rounded-xl border border-white/5 border-dashed">No episodes stored</div>
+                            <div className="flex justify-center items-center h-40">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+                            </div>
+                        ) : filteredData.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-64 text-gray-500 gap-4">
+                                <Sparkles className="w-12 h-12 opacity-20" />
+                                <p>No {activeTab === "semantic" ? "facts" : "episodes"} found for {activeMode} mode.</p>
+                            </div>
                         ) : (
-                            <AnimatePresence>
-                                {memories.episodic.map((item: any) => (
-                                    <motion.div
-                                        key={item.id}
-                                        layout
-                                        initial={{ opacity: 0, scale: 0.9 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.9 }}
-                                    >
-                                        <Card className="!p-4 bg-white/5 hover:bg-white/10 transition-colors group relative border-l-4 border-l-purple-500">
-                                            <p className="text-gray-200 pr-8 text-sm">{item.content}</p>
-                                            <span className="text-xs text-gray-500 mt-2 block">
-                                                {item.metadata?.timestamp ? new Date(item.metadata.timestamp).toLocaleString() : 'Unknown Time'}
-                                            </span>
-                                            <button
-                                                onClick={() => deleteEpisode(item.id)}
-                                                disabled={deletingIds.has(item.id)}
-                                                className={`absolute top-4 right-4 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ${deletingIds.has(item.id) ? 'opacity-100 cursor-not-allowed' : ''}`}
-                                            >
-                                                {deletingIds.has(item.id) ? <Activity className="animate-spin" size={18} /> : <Trash2 size={18} />}
-                                            </button>
-                                        </Card>
-                                    </motion.div>
-                                ))}
-                            </AnimatePresence>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <AnimatePresence>
+                                    {filteredData.map((item, i) => (
+                                        <motion.div
+                                            key={item._id || item.id || i}
+                                            layout
+                                            initial={{ opacity: 0, scale: 0.9 }}
+                                            animate={{ opacity: 1, scale: 1 }}
+                                            exit={{ opacity: 0, scale: 0.9 }}
+                                            transition={{ duration: 0.2, delay: i * 0.05 }}
+                                            className="bg-surface/40 backdrop-blur-md border border-white/5 p-5 rounded-2xl hover:border-white/10 hover:bg-surface/60 transition-all group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => activeTab === "semantic" ? deleteFact(item._id) : deleteEpisode(item.id)}
+                                                    className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+
+                                            <div className="flex items-start gap-3 mb-3">
+                                                <div className={`p-2 rounded-lg ${activeTab === "semantic" ? "bg-amber-500/10 text-amber-500" : "bg-blue-500/10 text-blue-500"}`}>
+                                                    {activeTab === "semantic" ? <Database size={16} /> : <Layers size={16} />}
+                                                </div>
+                                                <div className="text-xs font-mono text-gray-500 mt-1">
+                                                    {activeTab === "semantic" ? "FACT" : "EPISODE"}
+                                                </div>
+                                            </div>
+
+                                            <p className="text-sm text-gray-200 leading-relaxed">
+                                                {activeTab === "semantic" ? item.fact : item.content}
+                                            </p>
+
+                                            <div className="mt-4 text-[10px] text-gray-600 font-mono">
+                                                ID: {(item._id || item.id)?.substring(0, 8)}...
+                                            </div>
+                                        </motion.div>
+                                    ))}
+                                </AnimatePresence>
+                            </div>
                         )}
                     </div>
                 </div>
-            </motion.div>
+            </main>
         </div>
+    );
+}
+
+function TabButton({ active, onClick, icon: Icon, label }: any) {
+    return (
+        <button
+            onClick={onClick}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${active
+                ? "bg-white/10 text-white shadow-lg border border-white/10"
+                : "text-gray-400 hover:text-white hover:bg-white/5"
+                }`}
+        >
+            <Icon size={16} />
+            <span>{label}</span>
+        </button>
     );
 }

@@ -19,3 +19,12 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+# Periodic Tasks
+celery_app.conf.beat_schedule = {
+    # 'scan-all-directories-every-hour': {
+    #     'task': 'backend.app.tasks.scan_all_directories',
+    #     'schedule': 3600.0, # 1 hour
+    # },
+}
+

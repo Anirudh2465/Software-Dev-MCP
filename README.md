@@ -66,7 +66,7 @@ uv sync
 **C. Start Backend Server**
 ```bash
 # In the project root directory
-uv run uvicorn backend.app.main:app --reload --port 8001
+uv run uvicorn backend.app.main:app --reload --reload-dir backend --port 8001
 ```
 *   Backend API will be running at: `http://localhost:8001`
 *   API Docs: `http://localhost:8001/docs`

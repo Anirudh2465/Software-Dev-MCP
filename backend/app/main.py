@@ -198,11 +198,26 @@ async def set_persona(request: PersonaRequest, current_user: Annotated[dict, Dep
     result = orchestrator.prompt_manager.set_persona(request.persona)
     return {"status": result, "persona": orchestrator.prompt_manager.persona}
 
+class CreateModeRequest(BaseModel):
+    name: str
+    description: str
+    allowed_tools: List[str] = ["*"]
+
+@app.post("/modes")
+async def create_mode(request: CreateModeRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.mode_manager.create_mode(request.name, request.description, request.allowed_tools)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
 @app.get("/modes")
 async def get_modes(current_user: Annotated[dict, Depends(get_current_user)]):
     if not orchestrator:
          raise HTTPException(status_code=503, detail="Orchestrator not ready")
-    modes = orchestrator.semantic_memory.get_modes()
+    modes = orchestrator.mode_manager.get_all_modes()
     return {"modes": modes, "current_mode": orchestrator.prompt_manager.mode}
 
 @app.delete("/modes/{mode_name}")
@@ -210,16 +225,67 @@ async def delete_mode(mode_name: str, current_user: Annotated[dict, Depends(get_
     if not orchestrator:
          raise HTTPException(status_code=503, detail="Orchestrator not ready")
     
-    if mode_name == "Work":
-        return {"status": "Cannot delete default 'Work' mode."}
-        
+    result = orchestrator.mode_manager.delete_mode(mode_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    # Also delete memory
     orchestrator.semantic_memory.delete_mode(mode_name, user_id=current_user["username"])
     orchestrator.episodic_memory.delete_mode_memory(mode_name, user_id=current_user["username"])
     
     if orchestrator.prompt_manager.mode == mode_name:
         orchestrator.prompt_manager.set_mode("Work")
         
-    return {"status": f"Deleted mode {mode_name}"}
+    return result
+
+# --- Tone Routes ---
+
+class ToneRequest(BaseModel):
+    tone: str
+
+class CreateToneRequest(BaseModel):
+    name: str
+    description: str
+
+@app.get("/tones")
+async def get_tones(current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    tones = orchestrator.tone_manager.get_all_tones()
+    return {"tones": tones, "current_tone": orchestrator.prompt_manager.tone}
+
+@app.post("/tones")
+async def create_tone(request: CreateToneRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.tone_manager.create_tone(request.name, request.description)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.delete("/tones/{tone_name}")
+async def delete_tone(tone_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.tone_manager.delete_tone(tone_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    # Reset to default if deleted tone was active
+    if orchestrator.prompt_manager.tone == tone_name:
+        orchestrator.prompt_manager.set_tone("Professional")
+        
+    return result
+
+@app.post("/tone")
+async def set_tone(request: ToneRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    
+    result = orchestrator.prompt_manager.set_tone(request.tone)
+    return {"status": result, "tone": orchestrator.prompt_manager.tone}
 
 @app.get("/memory/{mode_name}")
 async def get_memory(mode_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
@@ -268,3 +334,56 @@ async def delete_episodic_memory(episode_id: str, mode: str, current_user: Annot
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+# --- File Monitor Routes ---
+
+from .services.file_monitor import FileMonitorService
+file_monitor_service = FileMonitorService()
+
+class DirectoryRequest(BaseModel):
+    path: str
+
+@app.get("/files/monitored")
+async def get_monitored_directories(current_user: Annotated[dict, Depends(get_current_user)]):
+    return file_monitor_service.get_directories()
+
+@app.post("/files/monitored")
+async def add_monitored_directory(request: DirectoryRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    result = file_monitor_service.add_directory(request.path)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    # Trigger initial scan
+    from .tasks import scan_directory
+    scan_directory.delay(result["path"])
+    
+    return result
+
+@app.delete("/files/monitored")
+async def remove_monitored_directory(path: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    success = file_monitor_service.remove_directory(path)
+    if not success:
+        raise HTTPException(status_code=404, detail="Directory not found")
+    return {"status": "removed"}
+
+@app.post("/files/scan")
+async def trigger_scan(request: DirectoryRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    from .tasks import scan_directory
+    scan_directory.delay(request.path)
+    return {"status": "scan_started", "path": request.path}
+
+@app.get("/files/list")
+async def list_directory_contents(path: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    contents = file_monitor_service.list_path_contents(path)
+    if contents is None:
+        raise HTTPException(status_code=404, detail="Path not found")
+    return {"path": path, "items": contents}
+
+@app.post("/files/browse")
+async def browse_directory(current_user: Annotated[dict, Depends(get_current_user)]):
+    from .utils.dialogs import open_folder_dialog
+    path = await open_folder_dialog()
+    if path:
+        return {"path": path}
+    return {"path": None}
+

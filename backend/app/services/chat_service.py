@@ -82,3 +82,30 @@ class ChatService:
             return result.deleted_count > 0
         except:
             return False
+
+    def update_chat_title(self, chat_id, user_id, title):
+        if self.collection is None:
+            return False
+        try:
+            result = self.collection.update_one(
+                {"_id": ObjectId(chat_id), "user_id": user_id},
+                {"$set": {"title": title}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating chat title {chat_id}: {e}")
+            return False
+
+    def update_chat_field(self, chat_id, user_id, field, value):
+        """Generic method to update a specific field in the chat document."""
+        if self.collection is None:
+            return False
+        try:
+            result = self.collection.update_one(
+                {"_id": ObjectId(chat_id), "user_id": user_id},
+                {"$set": {field: value}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating chat field {field} for {chat_id}: {e}")
+            return False
