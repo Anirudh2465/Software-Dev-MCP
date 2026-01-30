@@ -821,7 +821,7 @@ Active Memories:
                         recursive = function_args.get("recursive", True)
                         result_content = self.document_manager.ingest_directory(function_args["path"], recursive=recursive)
 
-                    elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file", "read_file"]:
+                    elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file"]:
                         print(f"Executing INTERNAL tool: {function_name}")
                         # Support both 'path' and 'file_path'
                         f_path = function_args.get("file_path") or function_args.get("path")

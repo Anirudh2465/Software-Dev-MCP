@@ -59,7 +59,7 @@ export default function MemoryPage() {
             await axios.delete(`${API_URL}/memory/semantic/${id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setData(prev => ({ ...prev, semantic: prev.semantic.filter(i => i._id !== id) }));
+            setData(prev => ({ ...prev, semantic: prev.semantic.filter(i => i.id !== id) }));
         } catch (err) { console.error(err); }
     };
 
@@ -159,7 +159,7 @@ export default function MemoryPage() {
                                         >
                                             <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
-                                                    onClick={() => activeTab === "semantic" ? deleteFact(item._id) : deleteEpisode(item.id)}
+                                                    onClick={() => activeTab === "semantic" ? deleteFact(item.id) : deleteEpisode(item.id)}
                                                     className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                                                 >
                                                     <Trash2 size={16} />
@@ -180,7 +180,7 @@ export default function MemoryPage() {
                                             </p>
 
                                             <div className="mt-4 text-[10px] text-gray-600 font-mono">
-                                                ID: {(item._id || item.id)?.substring(0, 8)}...
+                                                ID: {(item.id)?.substring(0, 8)}...
                                             </div>
                                         </motion.div>
                                     ))}
