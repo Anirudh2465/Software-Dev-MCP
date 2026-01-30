@@ -187,5 +187,19 @@
                 }
             }
         }
+    },
+    {
+        "name": "create_csv",
+        "description": "Generate a CSV file with specified columns, rows and random data.",
+        "filename": "create_csv.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
     }
 ]
