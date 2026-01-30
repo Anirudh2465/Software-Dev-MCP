@@ -28,7 +28,13 @@ def list_open_prs(repo_name):
             print("No open PRs found.")
             return "No open PRs found."
             
-        return "\n".join(results)
+        md_output = [f"### 🐙 Open PRs for `{repo_name}`", "", "| # | Title | Author |", "| :--- | :--- | :--- |"]
+        for pr in prs:
+             md_output.append(f"| #{pr.number} | {pr.title} | {pr.user.login} |")
+        
+        final_output = "\n".join(md_output)
+        print(final_output)
+        return final_output
     except Exception as e:
         print(f"Error listing PRs: {e}")
         return f"Error: {e}"
@@ -47,9 +53,11 @@ def get_pr_diff(repo_name, pr_number):
         pr = repo.get_pull(int(pr_number))
         
         files_data = []
-        print(f"Changes in PR #{pr_number}:")
+        files_data.append(f"### 📝 Changes in PR #{pr_number} (`{repo_name}`)")
+        
         for file in pr.get_files():
-            files_data.append(f"File: {file.filename}\nStatus: {file.status}\nPatch:\n{file.patch}\n")
+            files_data.append(f"\n#### 📄 `{file.filename}` ({file.status})\n")
+            files_data.append(f"```diff\n{file.patch}\n```")
             
         output = "\n".join(files_data)
         print(output)

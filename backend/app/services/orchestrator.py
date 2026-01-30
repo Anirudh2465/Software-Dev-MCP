@@ -13,8 +13,8 @@ from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager, ToneMan
 from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
-from .file_monitor import FileMonitorService
-from ..prompts import get_persona_prompt, generate_tone_prompt_template, DEFAULT_TONES
+from ..prompts import get_persona_prompt
+import re
 
 # ... [imports]
 
@@ -204,6 +204,16 @@ class JarvisOrchestrator:
                     
         except Exception as e:
             print(f"Error reading tool definitions: {e}", flush=True)
+
+    def _sanitize_response(self, text):
+        """
+        Removes raw model tokens or tags (e.g. <|start|>, <|message|>) that might leak into the output.
+        """
+        if not text:
+            return ""
+        # Remove <|...|> patterns
+        cleaned = re.sub(r"<\|.*?\|>", "", text)
+        return cleaned.strip()
 
     def _define_internal_tools(self):
         return [
@@ -976,17 +986,9 @@ Active Memories:
                     {"role": "user", "content": first_message}
                 ]
             )
-            title = response.choices[0].message.content.strip().replace('"', '')
-            self.chat_service.update_chat_title(chat_id, user_id, title)
-            print(f"DEBUG: Set chat title to '{title}'")
-        except Exception as e:
-            print(f"Error generating chat title: {e}")
-
-    async def _suggest_tools(self, first_message, chat_id, user_id):
-        print("DEBUG: Analyzing for proactive tools...")
-        try:
-             # Get all available tool names
-            all_tool_names = list(self.dynamic_tools.keys()) + list(self.real_tool_names)
+            final_message = second_response.choices[0].message
+            final_text = self._sanitize_response(final_message.content)
+            print(f"Jarvis: {final_text}")
             
             prompt = f"""
 You are an intelligent orchestrator. The user has just started a chat with this request:
@@ -1010,12 +1012,20 @@ Do NOT explain. Return ONLY JSON.
             if "```" in content:
                 content = content.split("```")[1].replace("json", "").strip()
             
-            tools = json.loads(content)
-            if isinstance(tools, list):
-                 self.chat_service.update_chat_field(chat_id, user_id, "suggested_tools", tools)
-                 print(f"DEBUG: Suggested tools: {tools}")
-                 return tools
-            return []
-        except Exception as e:
-            print(f"Error suggesting tools: {e}")
-            return []
+            # Save Assistant Response to DB
+            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+            
+            return final_text
+        
+        else:
+            final_text = self._sanitize_response(response_message.content)
+            print(f"Jarvis: {final_text}")
+            self.episodic_memory.add_episode(
+                content=f"User: {user_input}\nJarvis: {final_text}",
+                mode=self.prompt_manager.mode,
+                user_id=user_id
+            )
+            # Save Assistant Response to DB
+            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
+
+            return final_text
