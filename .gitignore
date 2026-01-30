@@ -11,3 +11,6 @@ wheels/
 
 # .env
 .env
+
+# Data
+data/

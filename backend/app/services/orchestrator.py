@@ -13,7 +13,8 @@ from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager, ToneMan
 from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
-from ..prompts import get_persona_prompt
+from ..prompts import get_persona_prompt, generate_tone_prompt_template
+from .file_monitor import FileMonitorService
 import re
 
 # ... [imports]
@@ -986,13 +987,26 @@ Active Memories:
                     {"role": "user", "content": first_message}
                 ]
             )
-            final_message = second_response.choices[0].message
-            final_text = self._sanitize_response(final_message.content)
-            print(f"Jarvis: {final_text}")
+            # Fix: use response, not second_response
+            response_message = response.choices[0].message
+            title = response_message.content.strip().replace('"', '')
+            print(f"Generated Title: {title}")
             
-            prompt = f"""
+            # Save Title via ChatService
+            self.chat_service.update_chat_title(chat_id, user_id, title)
+            return title
+
+        except Exception as e:
+            print(f"Error generating chat title: {e}")
+            return "New Chat"
+
+    async def _suggest_tools(self, user_input, chat_id, user_id):
+        # Extracted tool suggestion logic that was mixed in
+        all_tool_names = list(self.real_tool_names) + list(self.dynamic_tools.keys()) + [t["function"]["name"] for t in self.helper_tools]
+        
+        prompt = f"""
 You are an intelligent orchestrator. The user has just started a chat with this request:
-"{first_message}"
+"{user_input}"
 
 Available Tools: {', '.join(all_tool_names)}
 
@@ -1001,6 +1015,7 @@ Return a JSON array of tool names. Example: ["read_pdf", "calculator"].
 If no specific tools are needed, return [].
 Do NOT explain. Return ONLY JSON.
 """
+        try:
             response = completion(
                 model=os.getenv("LLM_MODEL", "openai/local-model"),
                 api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
@@ -1012,20 +1027,7 @@ Do NOT explain. Return ONLY JSON.
             if "```" in content:
                 content = content.split("```")[1].replace("json", "").strip()
             
-            # Save Assistant Response to DB
-            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
-            
-            return final_text
-        
-        else:
-            final_text = self._sanitize_response(response_message.content)
-            print(f"Jarvis: {final_text}")
-            self.episodic_memory.add_episode(
-                content=f"User: {user_input}\nJarvis: {final_text}",
-                mode=self.prompt_manager.mode,
-                user_id=user_id
-            )
-            # Save Assistant Response to DB
-            self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
-
-            return final_text
+            return json.loads(content)
+        except Exception as e:
+            print(f"Error suggesting tools: {e}")
+            return []
