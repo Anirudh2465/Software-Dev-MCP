@@ -29,6 +29,9 @@ export const Navbar = () => {
                         <Link href="/memory" className={`text-sm font-medium transition-colors ${pathname === '/memory' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
                             Memory
                         </Link>
+                        <Link href="/files" className={`text-sm font-medium transition-colors ${pathname === '/files' ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}>
+                            Files
+                        </Link>
                         <div className="h-4 w-px bg-white/10 mx-2" />
                         <span className="text-sm text-gray-400">Hello, <span className="text-white font-semibold">{user.username}</span></span>
                         <Button onClick={logout} className="!px-4 !py-2 !text-sm !bg-none !bg-white/10 hover:!bg-white/20">

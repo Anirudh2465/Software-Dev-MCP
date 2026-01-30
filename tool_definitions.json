@@ -173,5 +173,19 @@
                 }
             }
         }
+    },
+    {
+        "name": "extract_text_from_pdf",
+        "description": "Reads a PDF file and returns its full text content using a Python PDF library.",
+        "filename": "extract_text_from_pdf.py",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Dynamic input"
+                }
+            }
+        }
     }
 ]

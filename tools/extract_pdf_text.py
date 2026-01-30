@@ -1,6 +1,6 @@
-# REQUIREMENTS: PyPDF2
+# REQUIREMENTS: pypdf
 
-import PyPDF2
+import pypdf
 
 def extract_pdf_text(file_path):
     """
@@ -14,18 +14,21 @@ def extract_pdf_text(file_path):
     Returns
     -------
     str
-        Concatenated text from all pages of the PDF. If extraction fails, an empty string is returned.
+        Concatenated text from all pages of the PDF. If extraction fails, an error message is returned.
     """
     try:
-        with open(file_path, "rb") as fp:
-            reader = PyPDF2.PdfReader(fp)
-            text_chunks = []
-            for page in reader.pages:
-                # Some PDFs may contain no text on a page; skip if None
-                page_text = page.extract_text()
-                if page_text:
-                    text_chunks.append(page_text)
-        return "\n".join(text_chunks)
-    except Exception:
-        # Return empty string to indicate failure without raising an exception
-        return ""
+        # Open in binary mode just to be safe, though pypdf handles paths too
+        reader = pypdf.PdfReader(file_path)
+        text_chunks = []
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_chunks.append(page_text)
+        
+        full_text = "\n".join(text_chunks)
+        if not full_text:
+            return "[PDF extracted but no text found. It might be an image-based PDF which requires OCR.]"
+        return full_text
+        
+    except Exception as e:
+        return f"Error extracting PDF text: {str(e)}"

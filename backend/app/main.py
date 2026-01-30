@@ -334,3 +334,56 @@ async def delete_episodic_memory(episode_id: str, mode: str, current_user: Annot
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+# --- File Monitor Routes ---
+
+from .services.file_monitor import FileMonitorService
+file_monitor_service = FileMonitorService()
+
+class DirectoryRequest(BaseModel):
+    path: str
+
+@app.get("/files/monitored")
+async def get_monitored_directories(current_user: Annotated[dict, Depends(get_current_user)]):
+    return file_monitor_service.get_directories()
+
+@app.post("/files/monitored")
+async def add_monitored_directory(request: DirectoryRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    result = file_monitor_service.add_directory(request.path)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    # Trigger initial scan
+    from .tasks import scan_directory
+    scan_directory.delay(result["path"])
+    
+    return result
+
+@app.delete("/files/monitored")
+async def remove_monitored_directory(path: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    success = file_monitor_service.remove_directory(path)
+    if not success:
+        raise HTTPException(status_code=404, detail="Directory not found")
+    return {"status": "removed"}
+
+@app.post("/files/scan")
+async def trigger_scan(request: DirectoryRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    from .tasks import scan_directory
+    scan_directory.delay(request.path)
+    return {"status": "scan_started", "path": request.path}
+
+@app.get("/files/list")
+async def list_directory_contents(path: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    contents = file_monitor_service.list_path_contents(path)
+    if contents is None:
+        raise HTTPException(status_code=404, detail="Path not found")
+    return {"path": path, "items": contents}
+
+@app.post("/files/browse")
+async def browse_directory(current_user: Annotated[dict, Depends(get_current_user)]):
+    from .utils.dialogs import open_folder_dialog
+    path = await open_folder_dialog()
+    if path:
+        return {"path": path}
+    return {"path": None}
+

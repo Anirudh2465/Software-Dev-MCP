@@ -70,3 +70,68 @@ def initialize_user_partition(username: str):
         return f"User partition initialized for {username}"
     except Exception as e:
         return f"Initialization failed: {e}"
+
+@celery_app.task
+def scan_directory(path: str):
+    """
+    Scans a directory and updates the snapshot in MongoDB.
+    """
+    import os
+    from .services.file_monitor import FileMonitorService
+    
+    print(f"Scanning directory: {path}")
+    service = FileMonitorService()
+    
+    if not os.path.exists(path):
+        print(f"Directory not found: {path}")
+        return "Directory not found"
+        
+    file_list = []
+    try:
+        # Walk the directory
+        # Limit depth? User said "complete access", so full walk.
+        # But be careful of massive node_modules.
+        # We should probably respect .gitignore if possible, but for now raw scan.
+        # We'll skip .git, __pycache__, node_modules for sanity.
+        # We'll skip .git, __pycache__, node_modules for sanity.
+        SKIP_DIRS = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.idea', '.vscode', 'dist', 'build', '.next'}
+        
+        for root, dirs, files in os.walk(path):
+            # Modify dirs in-place to skip
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            
+            for name in files:
+                full_path = os.path.join(root, name)
+                rel_path = os.path.relpath(full_path, path)
+                
+                file_list.append({
+                   "rel_path": rel_path,
+                   "type": "file",
+                   "size": os.path.getsize(full_path)
+                })
+                
+        service.update_snapshot(path, file_list)
+        return f"Scanned {len(file_list)} files in {path}"
+        
+    except Exception as e:
+        print(f"Scan failed: {e}")
+        return f"Scan failed: {e}"
+
+@celery_app.task
+def scan_all_directories():
+    """
+    Periodic task to scan all monitored directories.
+    """
+    from .services.file_monitor import FileMonitorService
+    service = FileMonitorService()
+    dirs = service.get_directories()
+    results = []
+    for d in dirs:
+        # Trigger scan for each
+        # We can call synchronously or chain. Calling direct function since we are in a task.
+        # But better to spawn sub-tasks? No, simple loop here is fine for now.
+        res = scan_directory(d['path'])
+        results.append(res)
+    return results
+
+

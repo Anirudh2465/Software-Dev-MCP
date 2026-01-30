@@ -13,6 +13,7 @@ from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager, ToneMan
 from .tool_creator import ToolCreator
 from .document_manager import DocumentManager
 from .chat_service import ChatService
+from .file_monitor import FileMonitorService
 from ..prompts import get_persona_prompt, generate_tone_prompt_template, DEFAULT_TONES
 
 # ... [imports]
@@ -112,7 +113,9 @@ class JarvisOrchestrator:
         self.chat_service = ChatService()
         self.prompt_manager = PromptManager(self.semantic_memory, self.mode_manager, self.tone_manager)
         self.tool_creator = ToolCreator()
+        self.tool_creator = ToolCreator()
         self.document_manager = DocumentManager()
+        self.file_monitor = FileMonitorService()
         self.tool_collection = None
         self.session = None
         self.read_stream = None
@@ -367,6 +370,78 @@ class JarvisOrchestrator:
                         "required": ["name", "description", "allowed_tools"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                     "name": "list_files",
+                     "description": "List files in a specific directory (must be within monitored directories).",
+                     "parameters": {
+                         "type": "object",
+                         "properties": {
+                             "path": {"type": "string", "description": "Absolute path to the directory."}
+                         },
+                         "required": ["path"]
+                     }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                     "name": "read_file",
+                     "description": "Read the content of a text file.",
+                     "parameters": {
+                         "type": "object",
+                         "properties": {
+                             "path": {"type": "string", "description": "Absolute path to the file."}
+                         },
+                         "required": ["path"]
+                     }
+                }
+            },
+             {
+                "type": "function",
+                "function": {
+                     "name": "write_file",
+                     "description": "Write content to a file. OVERWRITES existing content.",
+                     "parameters": {
+                         "type": "object",
+                         "properties": {
+                             "path": {"type": "string", "description": "Absolute path to the file."},
+                             "content": {"type": "string", "description": "Content to write."}
+                         },
+                         "required": ["path", "content"]
+                     }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                     "name": "delete_file",
+                     "description": "Delete a file or empty directory.",
+                     "parameters": {
+                         "type": "object",
+                         "properties": {
+                             "path": {"type": "string", "description": "Absolute path to the file."}
+                         },
+                         "required": ["path"]
+                     }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                     "name": "run_shell_command",
+                     "description": "Run a shell command in a monitored directory. Use with CAUTION.",
+                     "parameters": {
+                         "type": "object",
+                         "properties": {
+                             "command": {"type": "string", "description": "The command to run."},
+                             "cwd": {"type": "string", "description": "Current working directory for the command."}
+                         },
+                         "required": ["command", "cwd"]
+                     }
+                }
             }
         ]
 
@@ -519,8 +594,14 @@ After creating a tool, it will be auto-loaded and available immediately.
         active_facts = self.semantic_memory.get_all_facts(mode=current_mode, user_id=user_id)
         fact_strings = [f['fact'] for f in active_facts]
         
+        file_context = self.file_monitor.get_monitored_context()
+        if file_context:
+            file_context = f"\n[FILE SYSTEM CONTEXT]\n{file_context}"
+        
         state_reminder = f"""
-\n[SYSTEM STATE REMINDER]
+{file_context}
+
+[SYSTEM STATE REMINDER]
 The following are the ONLY active facts. Ignore any conflicting information in the chat history above.
 Active Memories:
 {chr(10).join("- " + f for f in fact_strings) if fact_strings else "(No active memories)"}
@@ -771,6 +852,67 @@ Active Memories:
                             function_args.get("allowed_tools", ["*"])
                         )
                         result_content = str(res)
+
+
+                    elif function_name == "list_files":
+                        print(f"Executing FILE tool: {function_name}")
+                        try:
+                            path = function_args["path"]
+                            if os.path.exists(path):
+                                files = os.listdir(path)
+                                result_content = f"Files in {path}:\n" + "\n".join(files)
+                            else:
+                                result_content = f"Path not found: {path}"
+                        except Exception as e:
+                            result_content = f"Error listing files: {str(e)}"
+
+                    elif function_name == "read_file":
+                        print(f"Executing FILE tool: {function_name}")
+                        try:
+                            # Use DocumentManager for smarter reading? Or just plain text.
+                            # DocumentManager is more for "indexing". Here we want raw content for editing.
+                            with open(function_args["path"], "r", encoding="utf-8") as f:
+                                result_content = f.read()
+                        except Exception as e:
+                            result_content = f"Error reading file: {str(e)}"
+
+                    elif function_name == "write_file":
+                        print(f"Executing FILE tool: {function_name}")
+                        try:
+                            path = function_args["path"]
+                            content = function_args["content"]
+                            with open(path, "w", encoding="utf-8") as f:
+                                f.write(content)
+                            result_content = f"Successfully wrote to {path}"
+                        except Exception as e:
+                            result_content = f"Error writing file: {str(e)}"
+
+                    elif function_name == "delete_file":
+                        print(f"Executing FILE tool: {function_name}")
+                        try:
+                            path = function_args["path"]
+                            if os.path.isdir(path):
+                                os.rmdir(path)
+                                result_content = f"Deleted directory: {path}"
+                            else:
+                                os.remove(path)
+                                result_content = f"Deleted file: {path}"
+                        except Exception as e:
+                            result_content = f"Error deleting: {str(e)}"
+
+                    elif function_name == "run_shell_command":
+                        print(f"Executing FILE tool: {function_name}")
+                        try:
+                            import subprocess
+                            cmd = function_args["command"]
+                            cwd = function_args["cwd"]
+                            # Basic safety check: ensure cwd is within a monitored directory?
+                            # For now, we trust the agent as requested "complete access".
+                            
+                            proc = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True, timeout=30)
+                            result_content = f"Stdout:\n{proc.stdout}\nStderr:\n{proc.stderr}"
+                        except Exception as e:
+                            result_content = f"Error running command: {str(e)}"
 
                     else:
                         print(f"Simulating MOCK tool: {function_name}")
