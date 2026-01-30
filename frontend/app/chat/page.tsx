@@ -36,6 +36,11 @@ export default function ChatPage() {
     const [showCreateToneModal, setShowCreateToneModal] = useState(false);
     const [newTone, setNewTone] = useState({ name: "", description: "" });
 
+    // --- Mode State ---
+    const [showCreateModeModal, setShowCreateModeModal] = useState(false);
+    const [newMode, setNewMode] = useState({ name: "", description: "", allowed_tools: "" });
+    const [showModeMenu, setShowModeMenu] = useState(false);
+
     // --- Auth & Init ---
     useEffect(() => {
         if (!authLoading && !user) router.push('/login');
@@ -169,6 +174,41 @@ export default function ChatPage() {
         } catch (err) { console.error(err); }
     };
 
+    const handleCreateMode = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            const token = localStorage.getItem("token");
+            const tools = newMode.allowed_tools.split(",").map(t => t.trim()).filter(Boolean);
+            const payload = { ...newMode, allowed_tools: tools.length ? tools : ["*"] };
+
+            await axios.post(`${API_URL}/modes`, payload, { headers: { Authorization: `Bearer ${token}` } });
+            setNewMode({ name: "", description: "", allowed_tools: "" });
+            setShowCreateModeModal(false);
+            fetchModes();
+        } catch (err: any) {
+            alert(err.response?.data?.detail || "Error creating mode.");
+            console.error(err);
+        }
+    };
+
+    const handleDeleteMode = async (e: React.MouseEvent, modeName: string) => {
+        e.stopPropagation();
+        if (["Work", "Personal"].includes(modeName)) return alert("Cannot delete default modes.");
+        if (!confirm(`Delete mode '${modeName}' and all its memories?`)) return;
+
+        try {
+            const token = localStorage.getItem("token");
+            await axios.delete(`${API_URL}/modes/${modeName}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (activeTab === modeName) setActiveTab("Work");
+            fetchModes();
+        } catch (err: any) {
+            alert(err.response?.data?.detail || "Error deleting mode.");
+            console.error(err);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || !currentChatId) return;
@@ -242,6 +282,63 @@ export default function ChatPage() {
                                 <div className="flex justify-end gap-2 pt-2">
                                     <button type="button" onClick={() => setShowCreateToneModal(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
                                     <button type="submit" className="px-4 py-2 text-sm bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors font-medium">Create Tone</button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* --- Create Mode Modal --- */}
+            <AnimatePresence>
+                {showCreateModeModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                            className="bg-surface border border-white/10 p-6 rounded-2xl w-full max-w-md shadow-2xl relative"
+                        >
+                            <button onClick={() => setShowCreateModeModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                <Brain className="text-accent" /> Create New Mode
+                            </h2>
+                            <form onSubmit={handleCreateMode} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Name</label>
+                                    <input
+                                        className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white focus:border-accent focus:outline-none"
+                                        placeholder="e.g., Research, Creative"
+                                        value={newMode.name}
+                                        onChange={e => setNewMode({ ...newMode, name: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Description</label>
+                                    <textarea
+                                        className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white focus:border-accent focus:outline-none h-20 resize-none"
+                                        placeholder="Purpose of this mode..."
+                                        value={newMode.description}
+                                        onChange={e => setNewMode({ ...newMode, description: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-400 mb-1">Allowed Tools (comma separated, * for all)</label>
+                                    <input
+                                        className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white focus:border-accent focus:outline-none"
+                                        placeholder="e.g., read_pdf, search_web, *"
+                                        value={newMode.allowed_tools}
+                                        onChange={e => setNewMode({ ...newMode, allowed_tools: e.target.value })}
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <button type="button" onClick={() => setShowCreateModeModal(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
+                                    <button type="submit" className="px-4 py-2 text-sm bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors font-medium">Create Mode</button>
                                 </div>
                             </form>
                         </motion.div>
@@ -345,28 +442,79 @@ export default function ChatPage() {
                         </div>
                     </div>
 
-                    <div className="flex bg-surface/80 rounded-lg p-1 gap-1 border border-border overflow-x-auto scrollbar-none">
-                        {modes.map(mode => (
+                    <div className="mb-4">
+                        <label className="text-[10px] uppercase font-bold text-gray-500 px-1 mb-1 block">Mode</label>
+                        <div className="relative">
                             <button
-                                key={mode.name}
-                                onClick={() => {
-                                    setActiveTab(mode.name);
-                                    setMessages([]);
-                                    setCurrentChatId(null);
-
-                                    // Also tell backend to switch (optional but good for consistency)
-                                    const token = localStorage.getItem("token");
-                                    axios.post(`${API_URL}/mode`, { mode: mode.name }, { headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
-                                }}
-                                className={`flex-1 min-w-[60px] py-1.5 text-xs font-medium rounded-md transition-all duration-300 whitespace-nowrap px-2 ${activeTab === mode.name
-                                    ? "bg-accent text-white shadow-sm"
-                                    : "text-gray-400 hover:text-white hover:bg-white/5"
-                                    }`}
-                                title={mode.description || mode.name}
+                                onClick={() => setShowModeMenu(!showModeMenu)}
+                                className="w-full flex items-center justify-between p-2.5 bg-surface/80 border border-white/10 rounded-lg text-sm text-gray-200 hover:border-accent/50 hover:bg-white/5 transition-all text-left group"
                             >
-                                {mode.name}
+                                <div className="flex items-center gap-2.5 overflow-hidden">
+                                    <Brain size={16} className="text-accent flex-shrink-0" />
+                                    <div className="flex flex-col overflow-hidden">
+                                        <span className="font-medium truncate">{activeTab}</span>
+                                        <span className="text-[10px] text-gray-500 truncate">{modes.find(m => m.name === activeTab)?.description || "Standard mode"}</span>
+                                    </div>
+                                </div>
+                                <div className="pl-2">
+                                    <span className={`text-xs text-gray-500 transition-transform duration-200 block ${showModeMenu ? 'rotate-180' : ''}`}>▼</span>
+                                </div>
                             </button>
-                        ))}
+
+                            <AnimatePresence>
+                                {showModeMenu && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 5 }}
+                                        className="absolute top-full left-0 right-0 mt-2 bg-surface/95 border border-white/10 rounded-xl shadow-2xl z-50 backdrop-blur-xl overflow-hidden"
+                                    >
+                                        <div className="p-1">
+                                            <div className="max-h-[220px] overflow-y-auto scrollbar-thin">
+                                                {modes.map(mode => (
+                                                    <div key={mode.name} className="flex items-center group/item hover:bg-white/5 rounded-lg pr-1">
+                                                        <button
+                                                            onClick={async () => {
+                                                                setActiveTab(mode.name);
+                                                                setShowModeMenu(false);
+                                                                setMessages([]);
+                                                                setCurrentChatId(null);
+                                                                try {
+                                                                    const token = localStorage.getItem("token");
+                                                                    await axios.post(`${API_URL}/mode`, { mode: mode.name }, { headers: { Authorization: `Bearer ${token}` } });
+                                                                } catch (e) { console.error(e); }
+                                                            }}
+                                                            className={`flex-1 text-left px-3 py-2.5 rounded-lg flex items-center justify-between transition-colors ${activeTab === mode.name ? 'text-accent font-medium' : 'text-gray-400 group-hover/item:text-white'}`}
+                                                        >
+                                                            <span className="text-sm">{mode.name}</span>
+                                                            {activeTab === mode.name && <span className="w-1.5 h-1.5 rounded-full bg-accent"></span>}
+                                                        </button>
+
+                                                        {!["Work", "Personal"].includes(mode.name) && (
+                                                            <button
+                                                                onClick={(e) => handleDeleteMode(e, mode.name)}
+                                                                className="p-1.5 opacity-0 group-hover/item:opacity-100 text-gray-500 hover:text-red-400 hover:bg-white/10 rounded-md transition-all"
+                                                                title="Delete Mode"
+                                                            >
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="h-px bg-white/5 my-1" />
+                                            <button
+                                                onClick={() => { setShowCreateModeModal(true); setShowModeMenu(false); }}
+                                                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                                            >
+                                                <Plus size={14} />
+                                                <span>Create New Mode</span>
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
                     </div>
                 </div>
 
