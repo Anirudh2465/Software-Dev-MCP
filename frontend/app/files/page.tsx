@@ -107,7 +107,6 @@ export default function FilesPage() {
                 },
                 body: JSON.stringify({ path })
             });
-            alert("Scan started via Celery!");
         } catch (e) {
             console.error(e);
         }

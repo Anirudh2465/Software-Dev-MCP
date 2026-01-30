@@ -7,7 +7,7 @@ import importlib.util
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from litellm import completion
+from litellm import completion, acompletion
 from pathlib import Path
 from .memory_manager import EpisodicMemory, SemanticMemory, ModeManager, ToneManager
 from .tool_creator import ToolCreator
@@ -15,6 +15,7 @@ from .document_manager import DocumentManager
 from .chat_service import ChatService
 from ..prompts import get_persona_prompt, generate_tone_prompt_template
 from .file_monitor import FileMonitorService
+from .graph_service import KnowledgeGraphService
 import re
 
 # ... [imports]
@@ -116,7 +117,9 @@ class JarvisOrchestrator:
         self.tool_creator = ToolCreator()
         self.tool_creator = ToolCreator()
         self.document_manager = DocumentManager()
+        self.chat_service = ChatService()
         self.file_monitor = FileMonitorService()
+        self.graph_service = KnowledgeGraphService()
         self.tool_collection = None
         self.session = None
         self.read_stream = None
@@ -218,6 +221,43 @@ class JarvisOrchestrator:
 
     def _define_internal_tools(self):
         return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "update_knowledge_graph",
+                    "description": "Updates the user's knowledge graph with new concepts and relationships found in the conversation. Use this when the user explains a new idea, project structure, or connection.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "nodes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": "string", "description": "Unique ID for the concept (e.g. 'project_alpha')"},
+                                        "label": {"type": "string", "description": "Display label (e.g. 'Project Alpha')"},
+                                        "type": {"type": "string", "description": "Type of node: 'concept', 'task', 'file', 'person'"}
+                                    },
+                                    "required": ["id", "label"]
+                                }
+                            },
+                            "edges": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "source": {"type": "string", "description": "Source node ID"},
+                                        "target": {"type": "string", "description": "Target node ID"},
+                                        "label": {"type": "string", "description": "Relationship label (e.g. 'depends_on', 'contains')"}
+                                    },
+                                    "required": ["source", "target"]
+                                }
+                            }
+                        },
+                        "required": ["nodes", "edges"]
+                    }
+                }
+            },
             {
                 "type": "function",
                 "function": {
@@ -842,6 +882,10 @@ Active Memories:
                         else:
                             result_content = str(result)
                             
+                    elif function_name == "update_knowledge_graph":
+                        print(f"Executing INTERNAL tool: {function_name}")
+                        result_content = await self._update_knowledge_graph(function_args["nodes"], function_args["edges"])
+
                     elif function_name in self.dynamic_tools:
                         print(f"Executing DYNAMIC tool: {function_name}")
                         try:
@@ -975,10 +1019,62 @@ Active Memories:
 
         return final_text
 
+    async def _update_knowledge_graph(self, nodes, edges):
+        print(f"DEBUG: Updating knowledge graph: {len(nodes)} nodes, {len(edges)} edges")
+        from ..schemas.graph import GraphData, GraphNode, GraphEdge
+        
+        # Convert dictionary to Pydantic models
+        pydantic_nodes = []
+        for n in nodes:
+            # Simple layout logic or default
+            pydantic_nodes.append(GraphNode(
+                id=n["id"], 
+                label=n["label"], 
+                type=n.get("type", "default"),
+                position={"x": 50, "y": 50} 
+            ))
+            
+        pydantic_edges = []
+        for i, e in enumerate(edges):
+            pydantic_edges.append(GraphEdge(
+                id=f"{e['source']}-{e['target']}", # specific ID gen
+                source=e["source"],
+                target=e["target"],
+                label=e.get("label", "")
+            ))
+            
+        update_data = GraphData(nodes=pydantic_nodes, edges=pydantic_edges)
+        updated_graph = self.graph_service.update_graph(update_data)
+        return "Knowledge Graph updated successfully."
+
+    async def _generate_graph_from_text(self, text: str):
+        prompt = f"""
+        Extract a knowledge graph from the following text. 
+        Return a JSON object with 'nodes' (id, label, type) and 'edges' (source, target, label).
+        Text: "{text}"
+        JSON:
+        """
+        try:
+             response = await acompletion(
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
+            )
+             content = response.choices[0].message.content
+             if "```" in content:
+                 content = content.split("```")[1].replace("json", "").strip()
+             
+             data = json.loads(content)
+             return await self._update_knowledge_graph(data.get("nodes", []), data.get("edges", []))
+        except Exception as e:
+            return f"Error generating graph: {str(e)}"
+
     async def _generate_chat_title(self, first_message, chat_id, user_id):
         print("DEBUG: Generating chat title...")
         try:
-            response = completion(
+            response = await acompletion(
                 model=os.getenv("LLM_MODEL", "openai/local-model"),
                 api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
                 api_key=os.getenv("LLM_API_KEY", "lm-studio"),

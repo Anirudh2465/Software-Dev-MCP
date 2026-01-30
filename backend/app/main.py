@@ -99,6 +99,31 @@ def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depen
 async def read_users_me(current_user: Annotated[dict, Depends(get_current_user)]):
     return {"username": current_user["username"]}
 
+# --- Graph Routes ---
+@app.get("/graph", response_model=dict)
+async def get_graph():
+    return orchestrator.graph_service.get_graph().model_dump()
+
+@app.post("/graph/update")
+async def update_graph(update_data: dict, current_user: Annotated[dict, Depends(get_current_user)]):
+    # Manual update endpoint
+    from .schemas.graph import GraphData
+    try:
+        data = GraphData(**update_data)
+        updated_graph = orchestrator.graph_service.update_graph(data)
+        return updated_graph.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+class GraphGenRequest(BaseModel):
+    text: str
+
+@app.post("/graph/generate")
+async def generate_graph(req: GraphGenRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    result = await orchestrator._generate_graph_from_text(req.text)
+    return {"status": "success", "result": result}
+
+
 
 # --- App Routes ---
 

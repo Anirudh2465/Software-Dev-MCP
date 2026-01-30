@@ -77,7 +77,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-white/5 py-10 text-center text-gray-600 text-sm">
-        <p>&copy; 2026 Anirudh & Deepmind. All systems nominal.</p>
+        <p>&copy; 2026 AutoBots. All systems nominal.</p>
       </footer>
     </div>
   );
