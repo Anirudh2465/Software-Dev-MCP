@@ -102,6 +102,31 @@ class DocumentManager:
             print(f"Error searching documents: {e}")
             return []
 
+    def ingest_directory(self, dir_path: str, recursive=True):
+        """
+        Recursively ingests all supported files in a directory.
+        """
+        path = Path(dir_path)
+        if not path.exists() or not path.is_dir():
+            return f"Error: Directory not found: {dir_path}"
+
+        results = []
+        # Walk through directory
+        for root, dirs, files in os.walk(path):
+            if not recursive and root != str(path):
+                continue
+                
+            for file in files:
+                file_path = Path(root) / file
+                # Skip system/hidden files or large binaries if needed
+                if file.startswith("."): # Skip hidden files
+                    continue
+                    
+                res = self.ingest_file(str(file_path))
+                results.append(f"{file}: {res}")
+
+        return f"Ingested directory {dir_path}. Results:\n" + "\n".join(results)
+
     def _extract_text(self, path: Path):
         ext = path.suffix.lower()
         

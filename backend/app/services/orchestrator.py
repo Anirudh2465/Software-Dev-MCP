@@ -816,9 +816,19 @@ Active Memories:
                         print(f"Executing INTERNAL tool: {function_name}")
                         result_content = self.prompt_manager.set_persona(function_args["persona"])
                     
+                    elif function_name == "read_folder":
+                        print(f"Executing FILE tool: {function_name}")
+                        recursive = function_args.get("recursive", True)
+                        result_content = self.document_manager.ingest_directory(function_args["path"], recursive=recursive)
+
                     elif function_name in ["read_pdf", "read_docx", "read_image", "read_text_file", "read_file"]:
                         print(f"Executing INTERNAL tool: {function_name}")
-                        result_content = self.document_manager.ingest_file(function_args["file_path"])
+                        # Support both 'path' and 'file_path'
+                        f_path = function_args.get("file_path") or function_args.get("path")
+                        if not f_path:
+                            result_content = "Error: Missing argument 'path' or 'file_path'."
+                        else:
+                            result_content = self.document_manager.ingest_file(f_path)
                             
                     elif function_name == "create_tool":
                         print(f"Executing CREATION tool: {function_name}")
@@ -973,6 +983,9 @@ Active Memories:
         # Save Assistant Response to DB
         self.chat_service.add_message(chat_id, user_id, "assistant", final_text)
 
+        # Background: Extract Core Facts (Auto-Memory)
+        asyncio.create_task(self._extract_and_save_facts(user_input, final_text, user_id))
+
         return final_text
 
     async def _generate_chat_title(self, first_message, chat_id, user_id):
@@ -1016,7 +1029,7 @@ If no specific tools are needed, return [].
 Do NOT explain. Return ONLY JSON.
 """
         try:
-            response = completion(
+            response = await acompletion(
                 model=os.getenv("LLM_MODEL", "openai/local-model"),
                 api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
                 api_key=os.getenv("LLM_API_KEY", "lm-studio"),
@@ -1029,5 +1042,52 @@ Do NOT explain. Return ONLY JSON.
             
             return json.loads(content)
         except Exception as e:
-            print(f"Error suggesting tools: {e}")
+            # print(f"Error suggesting tools: {e}")
             return []
+
+    async def _extract_and_save_facts(self, user_input, assistant_output, user_id):
+        """
+        Background task to extract and save core facts from the conversation.
+        """
+        # print("DEBUG: Analyzing memory candidates...")
+        prompt = f"""
+        Analyze the following exchange. Identify any NEW, PERMANENT, or CORE FACTS about the User, their projects, preferences, or the System that should be remembered long-term.
+        Ignore:
+        - Transient questions ("How do I...")
+        - Simple greetings ("Hi")
+        - Temporary context ("I'm testing this")
+        - Information the Assistant just provided (unless the User confirmed it)
+
+        Return a JSON object with a single key "facts" containing a list of strings.
+        If no important facts are found, return {{"facts": []}}.
+
+        User: {user_input}
+        Assistant: {assistant_output}
+        """
+
+        try:
+            response = await acompletion(
+                model=os.getenv("LLM_MODEL", "openai/local-model"),
+                api_base=os.getenv("LLM_API_BASE", "http://localhost:1234/v1"),
+                api_key=os.getenv("LLM_API_KEY", "lm-studio"),
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
+            )
+            content = response.choices[0].message.content
+            if "```" in content:
+                content = content.split("```")[1].replace("json", "").strip()
+            
+            data = json.loads(content)
+            facts = data.get("facts", [])
+            
+            if facts:
+                print(f"DEBUG: Auto-Saving {len(facts)} facts.")
+                for fact in facts:
+                    current_mode = self.prompt_manager.mode
+                    res = self.semantic_memory.save_fact(fact, mode=current_mode, user_id=user_id)
+                    print(f"  - {res}")
+                    
+        except Exception as e:
+            # Silent fail for background tasks
+            # print(f"Error in memory extraction: {e}")
+            pass
